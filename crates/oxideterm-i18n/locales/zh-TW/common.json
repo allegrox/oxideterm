@@ -217,7 +217,8 @@
     "cancel": "取消",
     "delete": "刪除",
     "no": "否",
-    "yes": "是"
+    "yes": "是",
+    "status_connecting": "連線中"
   },
   "topology": {
     "button_title": "拓撲檢視",

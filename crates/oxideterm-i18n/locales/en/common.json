@@ -224,7 +224,8 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "no": "No",
-    "yes": "Yes"
+    "yes": "Yes",
+    "status_connecting": "Connecting"
   },
   "topology": {
     "button_title": "Topology View",

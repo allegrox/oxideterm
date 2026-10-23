@@ -167,6 +167,10 @@ impl ConnectionStore {
         audit_configuration_snapshot("serial_profiles", || build_serial_profiles_sync_snapshot(&self.data), |snapshot| snapshot.records.len())
     }
 
+    pub fn export_ble_profiles_snapshot(&self) -> Result<BleProfilesSyncSnapshot> {
+        audit_configuration_snapshot("ble_profiles", || build_ble_profiles_sync_snapshot(&self.data), |snapshot| snapshot.records.len())
+    }
+
     pub fn export_telnet_profiles_snapshot(&self) -> Result<TelnetProfilesSyncSnapshot> {
         audit_configuration_snapshot("telnet_profiles", || build_telnet_profiles_sync_snapshot(&self.data), |snapshot| snapshot.records.len())
     }
@@ -888,6 +892,25 @@ fn build_serial_profiles_sync_snapshot(
     )?;
 
     Ok(SerialProfilesSyncSnapshot {
+        revision,
+        exported_at: Utc::now().to_rfc3339(),
+        records,
+    })
+}
+
+fn build_ble_profiles_sync_snapshot(
+    data: &ConnectionStoreData,
+) -> Result<BleProfilesSyncSnapshot> {
+    let mut records = data.ble_profiles.clone();
+    records.sort_by(|left, right| left.id.cmp(&right.id));
+    let revision = sha256_hex(
+        &records
+            .iter()
+            .map(|profile| (&profile.id, profile.updated_at.to_rfc3339()))
+            .collect::<Vec<_>>(),
+    )?;
+
+    Ok(BleProfilesSyncSnapshot {
         revision,
         exported_at: Utc::now().to_rfc3339(),
         records,

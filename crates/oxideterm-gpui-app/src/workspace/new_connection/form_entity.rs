@@ -12,6 +12,9 @@ use crate::workspace::browser_behavior::{self, BrowserFocusOrigin};
 /// Owns the secret-bearing connection draft and its modal interaction metadata.
 pub(in crate::workspace) struct ConnectionFormState {
     pub(in crate::workspace) form: Option<NewConnectionForm>,
+    /// Stable focus target for the BLE scan-result list so Enter can inspect
+    /// the selected device after a click moves focus onto the list.
+    pub(in crate::workspace) ble_device_list_focus: gpui::FocusHandle,
     pub(in crate::workspace) presence: oxideterm_gpui_ui::motion::ExitPresence,
     pub(in crate::workspace) jump_server_presence: oxideterm_gpui_ui::motion::ExitPresence,
     pub(in crate::workspace) jump_server_exit_commits: bool,
@@ -25,9 +28,10 @@ pub(in crate::workspace) struct ConnectionFormState {
 }
 
 impl ConnectionFormState {
-    pub(in crate::workspace) fn new() -> Self {
+    pub(in crate::workspace) fn new(ble_device_list_focus: gpui::FocusHandle) -> Self {
         Self {
             form: None,
+            ble_device_list_focus,
             presence: oxideterm_gpui_ui::motion::ExitPresence::visible(),
             jump_server_presence: oxideterm_gpui_ui::motion::ExitPresence::visible(),
             jump_server_exit_commits: false,

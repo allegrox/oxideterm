@@ -332,6 +332,7 @@ pub enum TerminalBroadcastTargetKind {
     Mosh,
     Telnet,
     Serial,
+    Ble,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

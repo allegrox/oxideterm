@@ -217,7 +217,8 @@
     "cancel": "キャンセル",
     "delete": "削除",
     "no": "いいえ",
-    "yes": "はい"
+    "yes": "はい",
+    "status_connecting": "接続中"
   },
   "topology": {
     "button_title": "トポロジビュー",

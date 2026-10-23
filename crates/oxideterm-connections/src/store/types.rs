@@ -1049,6 +1049,23 @@ pub enum SerialLineEnding {
     None,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialSendMode {
+    #[default]
+    Text,
+    Hex,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialDisplayMode {
+    #[default]
+    Text,
+    Hex,
+    Mixed,
+}
+
 /// A reusable launch configuration, independent of any running PTY.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LocalTerminalProfile {
@@ -1144,6 +1161,97 @@ pub struct SaveSerialProfileRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BleProfile {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Free-form user metadata. UI copy warns against storing credentials here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_background_color: Option<String>,
+    /// Adapter controller MAC the caller prefers when multiple Bluetooth
+    /// adapters are present. macOS (CoreBluetooth) does not expose a MAC,
+    /// so leave this as `None` there; the resolver falls back to the first
+    /// available adapter when the preference is absent or unmatched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_mac: Option<String>,
+    /// Peripheral MAC used as the primary match key when the device uses a
+    /// public/static address. Leave as `None` for devices that use
+    /// resolvable private addresses (RPA): RPA addresses rotate every ~15
+    /// minutes, so the resolver falls back to matching by device name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_mac: Option<String>,
+    /// Peripheral advertisement name used as the fallback match key when
+    /// `device_mac` is absent (macOS, RPA devices) or when the MAC match
+    /// fails on the current scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// GATT service UUID the terminal protocol (e.g. Nordic UART Service)
+    /// runs over. Must be present as a canonical 8-4-4-4-12 hex UUID string.
+    pub service_uuid: String,
+    #[serde(
+        default,
+        skip_serializing_if = "ConnectionTerminalOptions::inherits_application_defaults"
+    )]
+    pub terminal: ConnectionTerminalOptions,
+    /// Per-connection runtime options for byte-stream handling (send mode,
+    /// display mode, line endings, local echo). Default values mirror the
+    /// session's runtime defaults so old profiles deserialize cleanly.
+    #[serde(default)]
+    pub input_line_ending: SerialLineEnding,
+    #[serde(default)]
+    pub output_line_ending: SerialLineEnding,
+    #[serde(default)]
+    pub send_mode: SerialSendMode,
+    #[serde(default)]
+    pub display_mode: SerialDisplayMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub local_echo: bool,
+    /// Preferred ATT MTU negotiated after connect; `None` keeps the platform
+    /// default negotiation. Values outside the BLE spec range are clamped at
+    /// the transport boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtu: Option<u16>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub connect_on_open: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SaveBleProfileRequest {
+    pub id: Option<String>,
+    pub name: String,
+    pub group: Option<String>,
+    pub notes: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    pub icon_background_color: Option<String>,
+    pub adapter_mac: Option<String>,
+    pub device_mac: Option<String>,
+    pub device_name: Option<String>,
+    pub service_uuid: String,
+    pub terminal: ConnectionTerminalOptions,
+    pub input_line_ending: Option<SerialLineEnding>,
+    pub output_line_ending: Option<SerialLineEnding>,
+    pub send_mode: Option<SerialSendMode>,
+    pub display_mode: Option<SerialDisplayMode>,
+    pub local_echo: Option<bool>,
+    /// `None` leaves the stored value untouched; `Some(None)` clears the
+    /// override; `Some(Some(mtu))` stores a preferred MTU.
+    pub mtu: Option<Option<u16>>,
+    pub connect_on_open: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TelnetProfile {
     pub id: String,
     pub name: String,
@@ -1223,6 +1331,9 @@ pub enum MoshPredictionMode {
     Always,
     Never,
 }
+
+pub const BLE_ATT_MTU_MIN: u16 = 23;
+pub const BLE_ATT_MTU_MAX: u16 = 517;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MoshProfile {
@@ -1725,6 +1836,53 @@ impl SerialProfile {
     }
 }
 
+impl BleProfile {
+    pub fn new(name: impl Into<String>, service_uuid: impl Into<String>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name: name.into(),
+            group: None,
+            notes: None,
+            icon: None,
+            color: None,
+            icon_background_color: None,
+            adapter_mac: None,
+            device_mac: None,
+            device_name: None,
+            service_uuid: service_uuid.into(),
+            terminal: ConnectionTerminalOptions::default(),
+            input_line_ending: SerialLineEnding::default(),
+            output_line_ending: SerialLineEnding::default(),
+            send_mode: SerialSendMode::default(),
+            display_mode: SerialDisplayMode::default(),
+            local_echo: false,
+            mtu: None,
+            connect_on_open: false,
+            created_at: now,
+            updated_at: now,
+            last_used_at: None,
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.id.trim().is_empty() {
+            bail!("BLE profile id is required");
+        }
+        if self.name.trim().is_empty() {
+            bail!("BLE profile name is required");
+        }
+        let uuid_str = self.service_uuid.trim();
+        if uuid_str.is_empty() {
+            bail!("BLE service UUID is required");
+        }
+        if uuid::Uuid::parse_str(uuid_str).is_err() {
+            bail!("BLE service UUID must be a valid UUID");
+        }
+        Ok(())
+    }
+}
+
 pub fn default_telnet_upstream_proxy() -> SavedUpstreamProxyPolicy {
     SavedUpstreamProxyPolicy::Direct
 }
@@ -2122,6 +2280,8 @@ pub struct ConnectionStoreData {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub serial_profiles: Vec<SerialProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ble_profiles: Vec<BleProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_terminal_profiles: Vec<LocalTerminalProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_terminal_tombstones: Vec<DeletedConnectionTombstone>,
@@ -2164,6 +2324,7 @@ impl Default for ConnectionStoreData {
             connection_tombstones: Vec::new(),
             managed_ssh_keys: Vec::new(),
             serial_profiles: Vec::new(),
+            ble_profiles: Vec::new(),
             local_terminal_profiles: Vec::new(),
             local_terminal_tombstones: Vec::new(),
             telnet_profiles: Vec::new(),
@@ -2187,6 +2348,15 @@ pub struct SerialProfilesSyncSnapshot {
     pub exported_at: String,
     #[serde(default)]
     pub records: Vec<SerialProfile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BleProfilesSyncSnapshot {
+    pub revision: String,
+    pub exported_at: String,
+    #[serde(default)]
+    pub records: Vec<BleProfile>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

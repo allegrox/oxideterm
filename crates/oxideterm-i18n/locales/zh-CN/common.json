@@ -224,7 +224,8 @@
     "cancel": "取消",
     "delete": "删除",
     "no": "否",
-    "yes": "是"
+    "yes": "是",
+    "status_connecting": "连接中"
   },
   "topology": {
     "button_title": "拓扑视图",

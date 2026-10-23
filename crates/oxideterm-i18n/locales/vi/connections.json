@@ -126,6 +126,11 @@
         "no_common": "không có thuật toán {{kind}} chung"
       },
       "stage": {
+        "ble_opening_adapter": "Đang mở bộ điều hợp Bluetooth",
+        "ble_scanning": "Đang quét thiết bị Bluetooth",
+        "ble_matching": "Đang khớp thiết bị",
+        "ble_verifying_service": "Đang xác minh dịch vụ",
+        "ble_ready": "Sẵn sàng",
         "authentication": "Đang xác thực",
         "kerberos_credentials": "Đang kiểm tra thông tin Kerberos",
         "gssapi_exchange": "Đang trao đổi token GSSAPI",

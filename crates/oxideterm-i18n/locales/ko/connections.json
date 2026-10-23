@@ -126,6 +126,11 @@
         "no_common": "공통 {{kind}} 알고리즘 없음"
       },
       "stage": {
+        "ble_opening_adapter": "Bluetooth 어댑터 여는 중",
+        "ble_scanning": "Bluetooth 장치 검색 중",
+        "ble_matching": "장치 매칭 중",
+        "ble_verifying_service": "서비스 확인 중",
+        "ble_ready": "준비 완료",
         "authentication": "인증 중",
         "kerberos_credentials": "Kerberos 자격 증명 확인 중",
         "gssapi_exchange": "GSSAPI 토큰 교환 중",

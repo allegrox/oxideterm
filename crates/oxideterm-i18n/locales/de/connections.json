@@ -126,6 +126,11 @@
         "no_common": "kein gemeinsamer {{kind}}-Algorithmus"
       },
       "stage": {
+        "ble_opening_adapter": "Bluetooth-Adapter wird geöffnet",
+        "ble_scanning": "Bluetooth-Geräte werden gesucht",
+        "ble_matching": "Gerät wird zugeordnet",
+        "ble_verifying_service": "Dienst wird geprüft",
+        "ble_ready": "Bereit",
         "authentication": "Authentifizierung",
         "kerberos_credentials": "Kerberos-Anmeldedaten werden geprüft",
         "gssapi_exchange": "GSSAPI-Token werden ausgetauscht",

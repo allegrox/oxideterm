@@ -217,7 +217,8 @@
     "cancel": "Cancelar",
     "delete": "Excluir",
     "no": "Não",
-    "yes": "Sim"
+    "yes": "Sim",
+    "status_connecting": "Conectando"
   },
   "topology": {
     "button_title": "Visualização de topologia",

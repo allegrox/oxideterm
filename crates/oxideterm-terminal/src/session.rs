@@ -178,6 +178,7 @@ pub use ssh_worker::SshPtySession;
 include!("session/telnet.rs");
 include!("session/mosh.rs");
 include!("session/serial.rs");
+include!("session/ble.rs");
 
 #[cfg(test)]
 mod tests {

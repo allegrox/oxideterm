@@ -126,6 +126,11 @@
         "no_common": "nenhum algoritmo de {{kind}} em comum"
       },
       "stage": {
+        "ble_opening_adapter": "Abrindo adaptador Bluetooth",
+        "ble_scanning": "Procurando dispositivos Bluetooth",
+        "ble_matching": "Identificando dispositivo",
+        "ble_verifying_service": "Verificando serviço",
+        "ble_ready": "Pronto",
         "authentication": "Autenticando",
         "kerberos_credentials": "Verificando credenciais Kerberos",
         "gssapi_exchange": "Trocando tokens GSSAPI",

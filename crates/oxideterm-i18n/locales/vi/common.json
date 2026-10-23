@@ -217,7 +217,8 @@
     "cancel": "Hủy",
     "delete": "Xóa",
     "no": "Không",
-    "yes": "Có"
+    "yes": "Có",
+    "status_connecting": "Đang kết nối"
   },
   "topology": {
     "button_title": "Chế độ xem Topology",

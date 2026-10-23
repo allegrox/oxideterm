@@ -217,7 +217,8 @@
     "cancel": "Annuler",
     "delete": "Supprimer",
     "no": "Non",
-    "yes": "Oui"
+    "yes": "Oui",
+    "status_connecting": "Connexion"
   },
   "topology": {
     "button_title": "Vue topologique",

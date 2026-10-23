@@ -217,7 +217,8 @@
     "cancel": "Abbrechen",
     "delete": "Löschen",
     "no": "Nein",
-    "yes": "Ja"
+    "yes": "Ja",
+    "status_connecting": "Verbindung wird hergestellt"
   },
   "topology": {
     "button_title": "Topologie-Ansicht",

@@ -186,7 +186,7 @@ pub struct SerialSession {
     modem_consumer: ModemConsumer,
     shell_integration: TerminalShellIntegration,
     serial_console_ingress: SerialConsoleIngress,
-    serial_line_ending_ingress: LineEndingIngress,
+    line_ending_ingress: LineEndingIngress,
     control_state: SerialControlState,
     runtime_options: SerialRuntimeOptions,
     hexdump_offset: u64,
@@ -228,12 +228,12 @@ const ESC_BYTE: u8 = 0x1b;
 const SERIAL_STRING_CONTROL_MARKER: &[u8] = b"?";
 
 #[derive(Debug, Default)]
-struct SerialConsoleIngress {
+pub(crate) struct SerialConsoleIngress {
     pending_escape: bool,
 }
 
 impl SerialConsoleIngress {
-    fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
+    pub(crate) fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
         if bytes.is_empty() {
             return Vec::new();
         }
@@ -393,7 +393,7 @@ impl SerialSession {
             modem_consumer: ModemConsumer::new(),
             shell_integration: TerminalShellIntegration::default(),
             serial_console_ingress: SerialConsoleIngress::default(),
-            serial_line_ending_ingress: LineEndingIngress::default(),
+            line_ending_ingress: LineEndingIngress::default(),
             control_state: SerialControlState::default(),
             runtime_options,
             hexdump_offset: 0,
@@ -714,7 +714,7 @@ impl SerialSession {
         match self.runtime_options.display_mode {
             SerialDisplayMode::Text => {
                 let normalized = self
-                    .serial_line_ending_ingress
+                    .line_ending_ingress
                     .normalize(bytes, self.runtime_options.output_line_ending);
                 self.serial_console_ingress.filter(&normalized)
             }
@@ -960,7 +960,7 @@ impl TerminalSessionBackend for SerialSession {
         {
             // Presentation changes apply only to future bytes, so no partial stream state may leak.
             self.hexdump_offset = 0;
-            self.serial_line_ending_ingress.reset();
+            self.line_ending_ingress.reset();
         }
         self.runtime_options = options;
         Ok(())
@@ -1663,7 +1663,7 @@ fn map_serial_io_error(
     SerialError::new(code, error.to_string(), Some(port_path.to_string()), true)
 }
 
-fn parse_serial_hex_input(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn parse_serial_hex_input(bytes: &[u8]) -> Result<Vec<u8>> {
     let text = std::str::from_utf8(bytes).context("Serial hex input must be UTF-8 text")?;
     let mut nibbles = Vec::new();
     for ch in text.chars() {
@@ -1686,7 +1686,7 @@ fn parse_serial_hex_input(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(parsed)
 }
 
-fn format_serial_hexdump(bytes: &[u8], offset: &mut u64, include_ascii: bool) -> Vec<u8> {
+pub(crate) fn format_serial_hexdump(bytes: &[u8], offset: &mut u64, include_ascii: bool) -> Vec<u8> {
     use std::fmt::Write as _;
 
     if bytes.is_empty() {
@@ -1877,7 +1877,7 @@ mod serial_tests {
             modem_consumer: ModemConsumer::new(),
             shell_integration: TerminalShellIntegration::default(),
             serial_console_ingress: SerialConsoleIngress::default(),
-            serial_line_ending_ingress: LineEndingIngress::default(),
+            line_ending_ingress: LineEndingIngress::default(),
             control_state: SerialControlState::default(),
             runtime_options: SerialRuntimeOptions::default(),
             hexdump_offset: 0,

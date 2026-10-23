@@ -72,6 +72,10 @@ impl ConnectionStore {
         &self.data.serial_profiles
     }
 
+    pub fn ble_profiles(&self) -> &[BleProfile] {
+        &self.data.ble_profiles
+    }
+
     pub fn telnet_profiles(&self) -> &[TelnetProfile] {
         &self.data.telnet_profiles
     }
@@ -1322,6 +1326,124 @@ impl ConnectionStore {
         Ok(true)
     }
 
+    pub fn upsert_ble_profile(
+        &mut self,
+        request: SaveBleProfileRequest,
+    ) -> Result<BleProfile> {
+        let audit = oxideterm_audit::AuditOperation::begin(
+            oxideterm_audit::AuditCategory::Configuration,
+            "configuration_save",
+            request.id.as_deref(),
+            Some(&request.name),
+        );
+        let audit_result = (|| {
+            let group = normalize_optional_group_name(request.group.as_deref())?;
+            let now = Utc::now();
+            let id = request.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+            let mut profile = self
+                .data
+                .ble_profiles
+                .iter()
+                .find(|profile| profile.id == id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut profile =
+                        BleProfile::new(request.name.trim(), request.service_uuid.trim());
+                    profile.id = id.clone();
+                    profile
+                });
+
+            profile.name = request.name.trim().to_string();
+            profile.group = group;
+            profile.notes = normalize_optional_text(request.notes);
+            profile.icon = normalize_optional_text(request.icon);
+            profile.color = normalize_optional_text(request.color);
+            profile.icon_background_color = normalize_optional_text(request.icon_background_color);
+            profile.adapter_mac = normalize_optional_text(request.adapter_mac);
+            profile.device_mac = normalize_optional_text(request.device_mac);
+            profile.device_name = normalize_optional_text(request.device_name);
+            profile.service_uuid = request.service_uuid.trim().to_string();
+            profile.terminal = request.terminal;
+            if let Some(value) = request.input_line_ending {
+                profile.input_line_ending = value;
+            }
+            if let Some(value) = request.output_line_ending {
+                profile.output_line_ending = value;
+            }
+            if let Some(value) = request.send_mode {
+                profile.send_mode = value;
+            }
+            if let Some(value) = request.display_mode {
+                profile.display_mode = value;
+            }
+            if let Some(value) = request.local_echo {
+                profile.local_echo = value;
+            }
+            if let Some(value) = request.mtu {
+                profile.mtu = value.map(|mtu| mtu.clamp(BLE_ATT_MTU_MIN, BLE_ATT_MTU_MAX));
+            }
+            profile.connect_on_open = request.connect_on_open.unwrap_or(false);
+            if !self.data.ble_profiles.iter().any(|existing| existing.id == id) {
+                profile.created_at = now;
+            }
+            profile.updated_at = now;
+            profile.validate()?;
+
+            if let Some(existing) = self
+                .data
+                .ble_profiles
+                .iter_mut()
+                .find(|existing| existing.id == id)
+            {
+                *existing = profile.clone();
+            } else {
+                self.data.ble_profiles.push(profile.clone());
+            }
+            self.normalize();
+            self.save()?;
+            Ok(profile)
+        })();
+        audit.result(&audit_result);
+        audit_result
+    }
+
+    pub fn delete_ble_profile(&mut self, id: &str) -> Result<bool> {
+        let audit = oxideterm_audit::AuditOperation::begin(
+            oxideterm_audit::AuditCategory::Configuration,
+            "configuration_delete",
+            Some(id),
+            None,
+        );
+        let audit_result = (|| {
+            let before = self.data.ble_profiles.len();
+            self.data.ble_profiles.retain(|profile| profile.id != id);
+            let deleted = self.data.ble_profiles.len() != before;
+            if deleted {
+                self.normalize();
+                self.save()?;
+            }
+            Ok(deleted)
+        })();
+        audit.changed(&audit_result);
+        audit_result
+    }
+
+    pub fn mark_ble_profile_used(&mut self, id: &str) -> Result<bool> {
+        let Some(profile) = self
+            .data
+            .ble_profiles
+            .iter_mut()
+            .find(|profile| profile.id == id)
+        else {
+            return Ok(false);
+        };
+        let now = Utc::now();
+        profile.last_used_at = Some(now);
+        profile.updated_at = now;
+        self.save()?;
+        Ok(true)
+    }
+
     pub fn upsert_telnet_profile(
         &mut self,
         request: SaveTelnetProfileRequest,
@@ -1442,6 +1564,109 @@ impl ConnectionStore {
             if let Some(value) = output {
                 profile.output_line_ending = value;
             }
+            profile.updated_at = Utc::now();
+            self.save()?;
+            Ok(true)
+        })();
+        audit.changed(&result);
+        result
+    }
+
+    /// Persists BLE transport runtime options (line endings, send/display mode,
+    /// local echo) on the matching profile. Returns `Ok(false)` when the profile
+    /// is missing or no field changed so callers can skip downstream work.
+    pub fn set_ble_profile_runtime_options(
+        &mut self,
+        id: &str,
+        input_line_ending: Option<SerialLineEnding>,
+        output_line_ending: Option<SerialLineEnding>,
+        send_mode: Option<SerialSendMode>,
+        display_mode: Option<SerialDisplayMode>,
+        local_echo: Option<bool>,
+    ) -> Result<bool> {
+        let audit = oxideterm_audit::AuditOperation::begin(
+            oxideterm_audit::AuditCategory::Configuration,
+            "configuration_save",
+            Some(id),
+            Some("ble_runtime_options"),
+        );
+        let result = (|| {
+            let Some(profile) = self
+                .data
+                .ble_profiles
+                .iter_mut()
+                .find(|profile| profile.id == id)
+            else {
+                return Ok(false);
+            };
+            let mut changed = false;
+            if let Some(value) = input_line_ending
+                && profile.input_line_ending != value
+            {
+                profile.input_line_ending = value;
+                changed = true;
+            }
+            if let Some(value) = output_line_ending
+                && profile.output_line_ending != value
+            {
+                profile.output_line_ending = value;
+                changed = true;
+            }
+            if let Some(value) = send_mode
+                && profile.send_mode != value
+            {
+                profile.send_mode = value;
+                changed = true;
+            }
+            if let Some(value) = display_mode
+                && profile.display_mode != value
+            {
+                profile.display_mode = value;
+                changed = true;
+            }
+            if let Some(value) = local_echo
+                && profile.local_echo != value
+            {
+                profile.local_echo = value;
+                changed = true;
+            }
+            if !changed {
+                return Ok(false);
+            }
+            profile.updated_at = Utc::now();
+            self.save()?;
+            Ok(true)
+        })();
+        audit.changed(&result);
+        result
+    }
+
+    /// Persists the ATT MTU negotiated at runtime back onto the saved BLE
+    /// profile so future sessions can start from the known-good value. The
+    /// runtime always clamps to `[BLE_ATT_MTU_MIN, BLE_ATT_MTU_MAX]`, so we
+    /// repeat the clamp here for callers that bypass the session pipeline
+    /// (cloud-sync snapshots, manual edits).
+    pub fn set_ble_profile_mtu(&mut self, id: &str, mtu: u16) -> Result<bool> {
+        let audit = oxideterm_audit::AuditOperation::begin(
+            oxideterm_audit::AuditCategory::Configuration,
+            "configuration_save",
+            Some(id),
+            Some("ble_negotiated_mtu"),
+        );
+        let result = (|| {
+            let Some(profile) = self
+                .data
+                .ble_profiles
+                .iter_mut()
+                .find(|profile| profile.id == id)
+            else {
+                return Ok(false);
+            };
+            let clamped = mtu.clamp(BLE_ATT_MTU_MIN, BLE_ATT_MTU_MAX);
+            if profile.mtu == Some(clamped) {
+                return Ok(false);
+            }
+            profile.mtu = Some(clamped);
             profile.updated_at = Utc::now();
             self.save()?;
             Ok(true)
