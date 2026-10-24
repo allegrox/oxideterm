@@ -374,7 +374,6 @@
       "transport_rdp": "RDP",
       "transport_vnc": "VNC",
       "transport_wsl_graphics": "WSL 그래픽스",
-      "ble_adapter": "블루투스 어댑터",
       "ble_column_actions": "작업",
       "ble_column_address": "주소",
       "ble_column_name": "이름",

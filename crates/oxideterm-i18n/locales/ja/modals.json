@@ -374,7 +374,6 @@
       "transport_rdp": "RDP",
       "transport_vnc": "VNC",
       "transport_wsl_graphics": "WSL グラフィックス",
-      "ble_adapter": "Bluetoothアダプター",
       "ble_column_actions": "操作",
       "ble_column_address": "アドレス",
       "ble_column_name": "名前",

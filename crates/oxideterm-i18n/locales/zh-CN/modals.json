@@ -374,7 +374,6 @@
       "transport_rdp": "RDP",
       "transport_vnc": "VNC",
       "transport_wsl_graphics": "WSL 图形转发",
-      "ble_adapter": "蓝牙适配器",
       "ble_column_actions": "操作",
       "ble_column_address": "地址",
       "ble_column_name": "名称",

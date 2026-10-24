@@ -111,7 +111,10 @@ impl WorkspaceApp {
                     } else {
                         div().w(px(width)).flex_none()
                     };
-                    cell.truncate().child(label.to_string()).into_any_element()
+                    cell.text_align(gpui::TextAlign::Center)
+                        .truncate()
+                        .child(label.to_string())
+                        .into_any_element()
                 };
                 let header = oxideterm_gpui_ui::tauri_table_header(&self.tokens, colors, metrics)
                     .child(header_cell(
@@ -385,7 +388,25 @@ impl WorkspaceApp {
                         }
                     }
                 }
-                div().child(header).child(body).into_any_element()
+                // The header stays outside the scroll viewport so column
+                // labels remain visible while the rows move.
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .child(
+                        div()
+                            .id("ble-device-rows")
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .max_h(px(300.0))
+                            .overflow_y_scroll()
+                            .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
+                            .child(body),
+                    )
+                    .into_any_element()
             };
             Some(
                 div()
@@ -406,9 +427,6 @@ impl WorkspaceApp {
                             }
                         }),
                     )
-                    .max_h(px(300.0))
-                    .overflow_y_scroll()
-                    .on_scroll_wheel(|_event, _window, cx| cx.stop_propagation())
                     .flex()
                     .flex_col()
                     .rounded(px(self.tokens.radii.sm))
@@ -422,23 +440,14 @@ impl WorkspaceApp {
             None
         };
 
-        // The adapter field mirrors the serial port field: a label row that
-        // carries the scan action, with the adapter control directly below it.
+        // The adapter picker and the scan action share one row so the control
+        // keeps the width the button does not need. A static field label would
+        // only repeat the section title above it.
         let adapter_row = div()
             .flex()
             .items_center()
-            .justify_between()
-            .gap(px(self.tokens.spacing.three))
-            .child(
-                div()
-                    .text_size(px(self.tokens.metrics.ui_text_sm))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(rgb(self.tokens.ui.text))
-                    .child(format!(
-                        "{}:",
-                        self.i18n.t("modals.new_connection.ble_adapter")
-                    )),
-            )
+            .gap(px(self.tokens.spacing.two))
+            .child(div().flex_1().min_w(px(0.0)).child(adapter_control))
             .child(self.workspace_toolbar_action_button(
                 scan_label,
                 Some(scan_icon),
@@ -477,7 +486,6 @@ impl WorkspaceApp {
             .flex_col()
             .gap(px(self.tokens.spacing.two))
             .child(adapter_row)
-            .child(adapter_control)
             .child(
                 div()
                     .flex()

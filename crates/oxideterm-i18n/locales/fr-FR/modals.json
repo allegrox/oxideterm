@@ -374,7 +374,6 @@
       "transport_rdp": "RDP",
       "transport_vnc": "VNC",
       "transport_wsl_graphics": "Graphiques WSL",
-      "ble_adapter": "Adaptateur Bluetooth",
       "ble_column_actions": "Actions",
       "ble_column_address": "Adresse",
       "ble_column_name": "Nom",
