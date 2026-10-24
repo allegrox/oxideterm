@@ -17,11 +17,6 @@ on:
         required: false
         default: false
         type: boolean
-      only_macos:
-        description: 'Build only the two macOS matrix jobs (arm64 + x64)'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -118,8 +113,6 @@ jobs:
   package:
     name: Package ${{ matrix.label }}
     needs: validate-release-request
-    # When only_macos is set, skip the four non-macOS matrix jobs.
-    if: ${{ !inputs.only_macos || startsWith(matrix.label, 'macos') }}
     runs-on: ${{ matrix.os }}
     permissions:
       actions: write
