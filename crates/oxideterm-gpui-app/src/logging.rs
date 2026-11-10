@@ -148,7 +148,7 @@ pub(crate) fn init_file_logging(
     // Forward `log` records (btleplug internals) into the tracing subscriber so
     // the EnvFilter directives above apply to them as well.
     let _ = tracing_log::LogTracer::builder()
-        .max_level(log::LevelFilter::Trace)
+        .with_max_level(log::LevelFilter::Trace)
         .init();
 
     tracing::info!(
