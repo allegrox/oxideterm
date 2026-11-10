@@ -874,6 +874,13 @@ impl WorkspaceApp {
         }
         let recording_status = self.active_terminal_recording_status(cx);
         let recording_active = recording_status.state != TerminalRecordingState::Idle;
+        // Show the panel only while the Overlay pane itself holds focus in
+        // its frontmost window: focus on a non-BLE pane or a pane not in
+        // Overlay mode hides the card, and the telemetry loop freezes with it.
+        let mc_helper_overlay = self.mc_helper_overlay_visible(cx)
+            && self.active_pane_id(cx) == self.mc_helper_owner_pane_id
+            && self.mc_helper_panel_targets_window(window.window_handle())
+            && window.is_window_active();
         if self.active_pane(cx).is_none()
             || !self.settings_store.settings().terminal.command_bar.enabled
         {
@@ -883,6 +890,9 @@ impl WorkspaceApp {
                 .child(terminal)
                 .when(recording_active, |surface| {
                     surface.child(self.render_terminal_recording_controls(recording_status, cx))
+                })
+                .when(mc_helper_overlay, |surface| {
+                    surface.child(self.render_mc_helper_overlay_panel(cx))
                 })
                 .into_any_element();
         }
@@ -906,6 +916,9 @@ impl WorkspaceApp {
                     .child(terminal)
                     .when(recording_active, |surface| {
                         surface.child(self.render_terminal_recording_controls(recording_status, cx))
+                    })
+                    .when(mc_helper_overlay, |surface| {
+                        surface.child(self.render_mc_helper_overlay_panel(cx))
                     }),
             )
             .when(

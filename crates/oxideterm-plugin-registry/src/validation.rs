@@ -258,6 +258,28 @@ pub(crate) fn validate_native_plugin_manifest(
     }
     if let Some(contributes) = &manifest.contributes {
         validate_native_plugin_contributions(contributes)?;
+        // Mirror the runtime registration gates so a manifest that declares a
+        // terminal hook without its capabilities fails at load with a precise
+        // error instead of a generic runtime failure at activation.
+        if let Some(hooks) = &contributes.terminal_hooks {
+            let capabilities =
+                normalize_native_plugin_capabilities(&manifest.permissions.capabilities)?;
+            let has = |capability: &str| capabilities.iter().any(|c| c == capability);
+            if hooks.input_interceptor.unwrap_or(false)
+                && (!has("terminal.content.read") || !has("terminal.write"))
+            {
+                return Err(
+                    "contributes.terminalHooks.inputInterceptor requires the terminal.content.read and terminal.write capabilities"
+                        .into(),
+                );
+            }
+            if hooks.output_processor.unwrap_or(false) && !has("terminal.content.read") {
+                return Err(
+                    "contributes.terminalHooks.outputProcessor requires the terminal.content.read capability"
+                        .into(),
+                );
+            }
+        }
         if let Some(previews) = &contributes.file_previews {
             if !manifest
                 .runtime

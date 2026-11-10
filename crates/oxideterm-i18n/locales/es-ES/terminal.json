@@ -186,6 +186,16 @@
       "line_ending_cr": "CR",
       "line_ending_none": "Sin cambios"
     },
+    "mc_helper": {
+      "button": "MC Helper",
+      "mode_off": "Desactivado",
+      "mode_inline": "En línea",
+      "mode_overlay": "Superpuesto",
+      "unavailable_hint": "El complemento MicroCon Helper no está instalado o está deshabilitado.",
+      "hint_baud": "Velocidad de baudios actual",
+      "hint_battery": "Nivel de batería",
+      "hint_temp": "Temperatura del dispositivo"
+    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",
@@ -654,13 +664,13 @@
       "agent_installing": "Instalando agente: {{percent}}% ({{transferred}} / {{total}} KiB)",
       "agent_starting": "Iniciando agente…"
     },
-      "ble": {
-        "connection_failed": "Error de conexión BLE: {error}",
-        "runtime_init_failed": "Error al inicializar el runtime BLE",
-        "adapter_index_out_of_range": "El índice del adaptador Bluetooth {n} está fuera de rango",
-        "service_not_found": "Servicio {uuid} no encontrado",
-        "no_notify_write_pair": "El servicio seleccionado no tiene un par de características notify+write"
-      }
+    "ble": {
+      "connection_failed": "Error de conexión BLE: {error}",
+      "runtime_init_failed": "Error al inicializar el runtime BLE",
+      "adapter_index_out_of_range": "El índice del adaptador Bluetooth {n} está fuera de rango",
+      "service_not_found": "Servicio {uuid} no encontrado",
+      "no_notify_write_pair": "El servicio seleccionado no tiene un par de características notify+write"
+    }
   },
   "search": {
     "placeholder": "Buscar",

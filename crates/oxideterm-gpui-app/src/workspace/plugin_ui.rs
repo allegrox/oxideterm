@@ -924,6 +924,9 @@ impl WorkspaceApp {
             ),
             "alert" => self.render_native_plugin_alert_control(control),
             "divider" => self.render_native_plugin_divider_control(),
+            // Flexible filler for layout rows: pushes trailing controls to the
+            // far edge without hardcoding host-side row arrangements.
+            "spacer" => div().flex_1().min_w_0().into_any_element(),
             "markdown" => self.render_native_plugin_text_block_control(control, false),
             "code" | "codeBlock" | "code-block" => {
                 self.render_native_plugin_text_block_control(control, true)
