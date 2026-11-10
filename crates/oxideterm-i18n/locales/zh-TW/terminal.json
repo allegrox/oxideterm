@@ -186,6 +186,16 @@
       "line_ending_cr": "CR",
       "line_ending_none": "原樣"
     },
+    "mc_helper": {
+      "button": "MC 助手",
+      "mode_off": "關閉",
+      "mode_inline": "行內",
+      "mode_overlay": "浮窗",
+      "unavailable_hint": "MicroCon Helper 外掛未安裝或已停用",
+      "hint_baud": "目前波特率",
+      "hint_battery": "電池剩餘電量",
+      "hint_temp": "裝置溫度"
+    },
     "recording": {
       "started": "終端錄製已開始",
       "discarded": "終端錄製已丟棄",
@@ -654,13 +664,13 @@
       "agent_installing": "正在安裝代理：{{percent}}%（{{transferred}} / {{total}} KiB）",
       "agent_starting": "正在啟動代理…"
     },
-      "ble": {
-        "connection_failed": "BLE 連線失敗：{error}",
-        "runtime_init_failed": "BLE 執行環境初始化失敗",
-        "adapter_index_out_of_range": "藍牙介面卡索引 {n} 越界",
-        "service_not_found": "未找到服務 {uuid}",
-        "no_notify_write_pair": "所選服務缺少 notify+write 特徵對"
-      }
+    "ble": {
+      "connection_failed": "BLE 連線失敗：{error}",
+      "runtime_init_failed": "BLE 執行環境初始化失敗",
+      "adapter_index_out_of_range": "藍牙介面卡索引 {n} 越界",
+      "service_not_found": "未找到服務 {uuid}",
+      "no_notify_write_pair": "所選服務缺少 notify+write 特徵對"
+    }
   },
   "search": {
     "placeholder": "搜尋",

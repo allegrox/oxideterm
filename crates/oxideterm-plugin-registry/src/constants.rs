@@ -55,11 +55,15 @@ pub(crate) const NATIVE_PLUGIN_DECLARATIVE_UI_CONTROL_KINDS: &[&str] = &[
     "emptyState",
     "empty-state",
     "divider",
+    "spacer",
     "keyValue",
     "key-value",
     "keyValueRow",
     "key-value-row",
 ];
+// Delivered only through the ble.onNotification dynamic subscription bridge; it
+// is deliberately absent from PHASE4 so events.on cannot attach to it.
+pub const NATIVE_PLUGIN_BLE_NOTIFICATION_EVENT: &str = "ble.notification";
 pub const NATIVE_PLUGIN_APP_THEME_CHANGED_EVENT: &str = "app.themeChanged";
 pub const NATIVE_PLUGIN_APP_SETTINGS_CHANGED_EVENT: &str = "app.settingsChanged";
 pub const NATIVE_PLUGIN_I18N_LANGUAGE_CHANGED_EVENT: &str = "i18n.languageChanged";

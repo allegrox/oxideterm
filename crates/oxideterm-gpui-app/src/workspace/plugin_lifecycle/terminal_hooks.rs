@@ -122,18 +122,64 @@ pub(super) fn native_plugin_terminal_action_from_call(
                 port,
             })
         }
+        "writeLocal" => {
+            // Display-only write: the text renders on the terminal screen but
+            // never crosses into the session transport or the session log.
+            let text = call
+                .args
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "terminal.writeLocal requires args.text".to_string())?;
+            let node_id = call
+                .args
+                .get("nodeId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            Ok(NativePluginTerminalAction::WriteLocal {
+                node_id,
+                text: text.to_string(),
+            })
+        }
+        "notify" => {
+            // Display-only feedback channel: the notice overlays the workspace
+            // and never crosses into the session transport the way the write
+            // actions do.
+            let title = call
+                .args
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|title| !title.is_empty())
+                .ok_or_else(|| "ui.notify requires args.title".to_string())?;
+            let description = call
+                .args
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let variant = call
+                .args
+                .get("variant")
+                .and_then(Value::as_str)
+                .unwrap_or("default")
+                .to_string();
+            Ok(NativePluginTerminalAction::Notify {
+                title: title.to_string(),
+                description,
+                variant,
+            })
+        }
         method => Err(format!("Unsupported terminal host call: {method}")),
     }
 }
 
 pub(super) fn native_plugin_apply_input_interceptors(
     bytes: &[u8],
+    session_id: Option<&str>,
     hooks: &[NativePluginRuntimeTerminalHookContribution],
     runtime_host: Arc<tokio::sync::Mutex<plugin_runtime::NativePluginRuntimeHost>>,
     runtime: Arc<tokio::runtime::Runtime>,
     host_api_resolver: plugin_runtime::NativeHostApiResolver,
 ) -> TerminalInputInterceptorResult {
-    native_plugin_reduce_input_interceptors(bytes, hooks, |hook, args| {
+    native_plugin_reduce_input_interceptors(bytes, session_id, hooks, |hook, args| {
         // The UI thread waits only for the hook budget. A busy runtime, timeout,
         // transport error, or malformed response falls through to fail-open.
         let dispatch = runtime.block_on(async {
@@ -197,6 +243,7 @@ pub(super) fn native_plugin_apply_output_processors(
 
 pub(super) fn native_plugin_reduce_input_interceptors<F>(
     bytes: &[u8],
+    session_id: Option<&str>,
     hooks: &[NativePluginRuntimeTerminalHookContribution],
     mut dispatch: F,
 ) -> TerminalInputInterceptorResult
@@ -204,9 +251,14 @@ where
     F: FnMut(&NativePluginRuntimeTerminalHookContribution, Value) -> Option<Value>,
 {
     let mut current = String::from_utf8_lossy(bytes).to_string();
+    let mut echo: Vec<u8> = Vec::new();
     for hook in hooks {
+        // terminalId carries the owning session so plugins can attribute the
+        // keystrokes to a concrete terminal (it matches the sessionId exposed
+        // by ble.sessions and other session projections).
         let args = json!({
             "registrationId": hook.registration_id.clone(),
+            "terminalId": session_id,
             "data": current.clone(),
             "text": current.clone(),
             "bytes": current.as_bytes().to_vec(),
@@ -217,12 +269,32 @@ where
         if value.is_null() {
             return TerminalInputInterceptorResult::Suppress;
         }
+        // {"echo": "..."} accumulates screen-only display bytes. Together with
+        // "suppress": true the payload is held back entirely (local echo); on
+        // its own the echo still renders while the text keeps flowing.
+        if let Some(echo_text) = value.get("echo").and_then(Value::as_str) {
+            echo.extend_from_slice(echo_text.as_bytes());
+        }
+        if value.get("suppress").and_then(Value::as_bool) == Some(true) {
+            return if echo.is_empty() {
+                TerminalInputInterceptorResult::Suppress
+            } else {
+                TerminalInputInterceptorResult::LocalEcho { echo, send: None }
+            };
+        }
         if let Some(next) = native_plugin_terminal_hook_text_value(&value) {
             current = next;
         }
     }
 
-    TerminalInputInterceptorResult::Continue(current.into_bytes())
+    if echo.is_empty() {
+        TerminalInputInterceptorResult::Continue(current.into_bytes())
+    } else {
+        TerminalInputInterceptorResult::LocalEcho {
+            echo,
+            send: Some(current.into_bytes()),
+        }
+    }
 }
 
 pub(super) fn native_plugin_reduce_output_processors<F>(

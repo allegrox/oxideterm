@@ -63,6 +63,50 @@ fn connection_declarations_validate_provider_permissions_and_form_boundaries() {
     }
 }
 
+#[test]
+fn terminal_hook_declarations_require_their_capabilities() {
+    let mut manifest = minimal_manifest();
+    manifest.contributes = Some(
+        serde_json::from_value(serde_json::json!({
+            "terminalHooks": {"inputInterceptor": true, "outputProcessor": true}
+        }))
+        .unwrap(),
+    );
+    // Hooks without any capability declaration fail with the mirrored gate.
+    assert_eq!(
+        validate_native_plugin_manifest(&manifest).unwrap_err(),
+        "contributes.terminalHooks.inputInterceptor requires the terminal.content.read and terminal.write capabilities"
+    );
+    manifest.permissions.capabilities = vec!["terminal.write".into()];
+    assert_eq!(
+        validate_native_plugin_manifest(&manifest).unwrap_err(),
+        "contributes.terminalHooks.inputInterceptor requires the terminal.content.read and terminal.write capabilities"
+    );
+    // Both interceptor capabilities satisfy the interceptor but the output
+    // processor still needs terminal.content.read alone to pass everything.
+    manifest.permissions.capabilities =
+        vec!["terminal.content.read".into(), "terminal.write".into()];
+    validate_native_plugin_manifest(&manifest).unwrap();
+    manifest.contributes = Some(
+        serde_json::from_value(serde_json::json!({
+            "terminalHooks": {"outputProcessor": true}
+        }))
+        .unwrap(),
+    );
+    manifest.permissions.capabilities = vec!["terminal.write".into()];
+    assert_eq!(
+        validate_native_plugin_manifest(&manifest).unwrap_err(),
+        "contributes.terminalHooks.outputProcessor requires the terminal.content.read capability"
+    );
+    manifest.permissions.capabilities = vec!["terminal.content.read".into()];
+    validate_native_plugin_manifest(&manifest).unwrap();
+    // Declaring no hooks keeps manifests without capabilities valid.
+    manifest.contributes =
+        Some(serde_json::from_value(serde_json::json!({"terminalHooks": {}})).unwrap());
+    manifest.permissions.capabilities.clear();
+    validate_native_plugin_manifest(&manifest).unwrap();
+}
+
 use std::io::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zip::{ZipWriter, write::SimpleFileOptions};
@@ -1857,9 +1901,18 @@ fn manifest_only_contributions_follow_persisted_enable_state() {
     fs::create_dir_all(&plugin_dir).unwrap();
     let mut manifest = minimal_manifest();
     manifest.contributes = Some(sample_contributes());
+    // sample_contributes declares an input interceptor, whose registration the
+    // host gates behind these capabilities.
+    manifest.permissions.capabilities =
+        vec!["terminal.content.read".into(), "terminal.write".into()];
     write_manifest(&plugin_dir, &manifest);
 
     let mut registry = NativePluginRegistry::discover(&settings_path);
+    // The interceptor capabilities require approval before the plugin becomes
+    // ready; enabling records the approval.
+    registry
+        .set_plugin_enabled("com.example.demo", true)
+        .unwrap();
     assert_eq!(
         registry.plugins()[0].state,
         NativePluginState::ReadyManifestOnly
@@ -1918,9 +1971,18 @@ fn plugin_setting_values_resolve_defaults_validate_and_persist() {
     fs::create_dir_all(&plugin_dir).unwrap();
     let mut manifest = minimal_manifest();
     manifest.contributes = Some(sample_contributes());
+    // sample_contributes declares an input interceptor, whose registration the
+    // host gates behind these capabilities.
+    manifest.permissions.capabilities =
+        vec!["terminal.content.read".into(), "terminal.write".into()];
     write_manifest(&plugin_dir, &manifest);
 
     let mut registry = NativePluginRegistry::discover(&settings_path);
+    // The interceptor capabilities require approval before contributions are
+    // served; enabling records the approval.
+    registry
+        .set_plugin_enabled("com.example.demo", true)
+        .unwrap();
     assert_eq!(
         registry.plugin_setting_value("com.example.demo", "mode"),
         Some(Value::String("auto".to_string()))
@@ -2044,9 +2106,18 @@ fn runtime_registrations_feed_host_owned_contribution_store_and_cleanup() {
         }),
         ..NativePluginContributes::default()
     });
+    // The declared input interceptor and output processor are gated behind
+    // these capabilities by manifest validation.
+    manifest.permissions.capabilities =
+        vec!["terminal.content.read".into(), "terminal.write".into()];
     write_manifest(&plugin_dir, &manifest);
 
     let mut registry = NativePluginRegistry::discover(&settings_path);
+    // The interceptor capabilities require approval before the plugin serves
+    // contributions; enabling records the approval.
+    registry
+        .set_plugin_enabled("com.example.demo", true)
+        .unwrap();
     registry
         .apply_runtime_registration(PluginRegistration {
             registration_id: "cmd-1".to_string(),
@@ -2360,6 +2431,10 @@ fn toggling_another_plugin_preserves_loading_and_active_tabs() {
         entry: "plugin.wasm".into(),
     });
     manifest.contributes = Some(sample_contributes());
+    // sample_contributes declares an input interceptor, whose registration the
+    // host gates behind these capabilities.
+    manifest.permissions.capabilities =
+        vec!["terminal.content.read".into(), "terminal.write".into()];
     fs::write(plugin_dir.join("plugin.wasm"), b"\0asm").unwrap();
     write_manifest(&plugin_dir, &manifest);
     let other_dir = plugins_dir.join("com.example.other");

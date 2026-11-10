@@ -186,6 +186,16 @@
       "line_ending_cr": "CR",
       "line_ending_none": "Brut"
     },
+    "mc_helper": {
+      "button": "MC Helper",
+      "mode_off": "Désactivé",
+      "mode_inline": "En ligne",
+      "mode_overlay": "Superposé",
+      "unavailable_hint": "L'extension MicroCon Helper n'est pas installée ou est désactivée.",
+      "hint_baud": "Vitesse de bauds actuelle",
+      "hint_battery": "Niveau de batterie",
+      "hint_temp": "Température de l'appareil"
+    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",
@@ -654,13 +664,13 @@
       "agent_installing": "Installation de l’agent : {{percent}}% ({{transferred}} / {{total}} KiB)",
       "agent_starting": "Démarrage de l’agent…"
     },
-      "ble": {
-        "connection_failed": "Échec de la connexion BLE : {error}",
-        "runtime_init_failed": "Échec de l'initialisation du runtime BLE",
-        "adapter_index_out_of_range": "L'index de l'adaptateur Bluetooth {n} est hors limites",
-        "service_not_found": "Service {uuid} introuvable",
-        "no_notify_write_pair": "Le service sélectionné n'a pas de paire de caractéristiques notify+write"
-      }
+    "ble": {
+      "connection_failed": "Échec de la connexion BLE : {error}",
+      "runtime_init_failed": "Échec de l'initialisation du runtime BLE",
+      "adapter_index_out_of_range": "L'index de l'adaptateur Bluetooth {n} est hors limites",
+      "service_not_found": "Service {uuid} introuvable",
+      "no_notify_write_pair": "Le service sélectionné n'a pas de paire de caractéristiques notify+write"
+    }
   },
   "search": {
     "placeholder": "Rechercher",

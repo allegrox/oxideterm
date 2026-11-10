@@ -101,7 +101,7 @@ impl WorkspaceApp {
                     *pane_id,
                     *session_id,
                     *window_handle,
-                    *event,
+                    event.clone(),
                     cx,
                 );
             }
