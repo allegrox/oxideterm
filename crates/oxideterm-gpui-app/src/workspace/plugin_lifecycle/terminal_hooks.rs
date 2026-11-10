@@ -21,6 +21,7 @@ const NATIVE_PLUGIN_TERMINAL_HOOK_TIMEOUT: Duration = Duration::from_millis(5);
 // Terminal hook execution has a strict timeout and fail-open behavior; keeping
 // it isolated makes that contract easier to audit than burying it in lifecycle.
 pub(super) fn native_plugin_terminal_response(
+    plugin_id: &str,
     call: plugin_runtime::PluginHostCall,
     terminal_tx: &delivery::ActiveDeliverySender<NativePluginTerminalRequest>,
 ) -> plugin_runtime::PluginResponse {
@@ -37,6 +38,7 @@ pub(super) fn native_plugin_terminal_response(
     let (response_tx, response_rx) = mpsc::channel();
     if terminal_tx
         .send(NativePluginTerminalRequest {
+            plugin_id: plugin_id.to_string(),
             request_id: request_id.clone(),
             action,
             response_tx,
@@ -165,6 +167,28 @@ pub(super) fn native_plugin_terminal_action_from_call(
                 title: title.to_string(),
                 description,
                 variant,
+            })
+        }
+        "reportActionState" => {
+            let action_id = call
+                .args
+                .get("actionId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "toolbar.reportActionState requires args.actionId".to_string())?;
+            let state_id = call
+                .args
+                .get("stateId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "toolbar.reportActionState requires args.stateId".to_string())?;
+            let pane_id = call
+                .args
+                .get("paneId")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "toolbar.reportActionState requires args.paneId".to_string())?;
+            Ok(NativePluginTerminalAction::ReportToolbarActionState {
+                action_id: action_id.to_string(),
+                state_id: state_id.to_string(),
+                pane_id,
             })
         }
         method => Err(format!("Unsupported terminal host call: {method}")),

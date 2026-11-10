@@ -104,6 +104,7 @@ impl NativePluginConfirmDialog {
 }
 
 pub(in crate::workspace) struct NativePluginTerminalRequest {
+    pub(in crate::workspace) plugin_id: String,
     pub(in crate::workspace) request_id: String,
     pub(in crate::workspace) action: NativePluginTerminalAction,
     pub(in crate::workspace) response_tx: mpsc::Sender<plugin_runtime::PluginResponse>,
@@ -132,6 +133,13 @@ pub(in crate::workspace) enum NativePluginTerminalAction {
         title: String,
         description: Option<String>,
         variant: String,
+    },
+    /// The plugin resolved the state for a toolbar chip click; the host
+    /// applies it for the pane under the requesting plugin's identity.
+    ReportToolbarActionState {
+        action_id: String,
+        state_id: String,
+        pane_id: u64,
     },
 }
 

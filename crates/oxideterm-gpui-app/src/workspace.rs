@@ -108,7 +108,6 @@ use self::{
         PathCompletionCandidate, PathCompletionOwner, PathCompletionState,
         local_path_completion_request, remote_path_completion_request,
     },
-    plugin_toolbar::next_plugin_toolbar_state,
     sidebar::{ContextSidebarPanel, ContextSidebarTool},
     version_migration::VersionMigrationState,
 };

@@ -461,16 +461,27 @@ impl WorkspaceApp {
                 if !self.native_plugin_available(plugin_id, cx) {
                     return;
                 }
+                // The plugin owns the state semantics. Wake its runtime so
+                // the first click (every pane at the default state, runtime
+                // stopped) is still delivered, then hand the click over as an
+                // event; the plugin reports the resolved state back through
+                // toolbar.reportActionState.
+                let resolver = self.native_plugin_host_api_resolver(cx);
+                self.plugin_entity.update(cx, |plugins, _cx| {
+                    let _ = plugins.start_runtime_plugin_activation(plugin_id, resolver);
+                });
                 let current = self
                     .plugin_toolbar_state(plugin_id, action_id, pane_id)
-                    .cloned();
-                let next = next_plugin_toolbar_state(&definition, current.as_deref());
-                self.apply_plugin_toolbar_state(
-                    plugin_id,
-                    action_id,
-                    &next,
-                    pane_id,
-                    Some(window_handle),
+                    .cloned()
+                    .unwrap_or_else(|| definition.default_state.clone());
+                self.dispatch_native_plugin_event(
+                    plugin_id.to_string(),
+                    "toolbar.actionClicked",
+                    serde_json::json!({
+                        "actionId": action_id,
+                        "paneId": pane_id.0,
+                        "currentState": current,
+                    }),
                     cx,
                 );
             }

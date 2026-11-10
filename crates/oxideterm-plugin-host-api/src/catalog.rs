@@ -1360,6 +1360,13 @@ pub static HOST_API_CATALOG: &[HostApiDescriptor] = &[
         "Shows a host notification."
     ),
     api!(
+        "toolbar",
+        "reportActionState",
+        Mutating,
+        Some(NATIVE_PLUGIN_CAPABILITY_UI_WRITE),
+        "Reports the toolbar action state the plugin resolved for one pane click."
+    ),
+    api!(
         "storage",
         "set",
         Mutating,

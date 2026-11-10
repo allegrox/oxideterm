@@ -196,24 +196,3 @@ impl WorkspaceApp {
         pane.update(cx, |pane, cx| pane.set_toolbar_actions(specs, cx));
     }
 }
-
-/// Next state id in declaration order, wrapping around. A stored state that
-/// no longer matches the manifest (e.g. after a plugin update) restarts from
-/// the default state.
-pub(in crate::workspace) fn next_plugin_toolbar_state(
-    def: &plugin_host::NativePluginTerminalToolbarActionDef,
-    current: Option<&str>,
-) -> String {
-    let current = current.unwrap_or(def.default_state.as_str());
-    let index = def
-        .states
-        .iter()
-        .position(|state| state.id == current)
-        .or_else(|| {
-            def.states
-                .iter()
-                .position(|state| state.id == def.default_state)
-        })
-        .unwrap_or(0);
-    def.states[(index + 1) % def.states.len()].id.clone()
-}

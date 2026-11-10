@@ -1531,6 +1531,35 @@ fn terminal_write_host_calls_parse_text_and_node_id() {
         NativePluginTerminalAction::OpenTelnet { ref host, port }
             if host == "example.com" && port == 2323
     ));
+
+    let report = native_plugin_terminal_action_from_call(&plugin_runtime::PluginHostCall {
+        request_id: "toolbar-report-1".to_string(),
+        namespace: "toolbar".to_string(),
+        method: "reportActionState".to_string(),
+        args: serde_json::json!({
+            "actionId": "mc-helper-mode",
+            "stateId": "inline",
+            "paneId": 42,
+        }),
+    })
+    .unwrap();
+    assert!(matches!(
+        report,
+        NativePluginTerminalAction::ReportToolbarActionState { ref action_id, ref state_id, pane_id }
+            if action_id == "mc-helper-mode" && state_id == "inline" && pane_id == 42
+    ));
+
+    // A report without the pane identity must be rejected: the host may not
+    // apply a state it cannot attribute to an open pane.
+    match native_plugin_terminal_action_from_call(&plugin_runtime::PluginHostCall {
+        request_id: "toolbar-report-2".to_string(),
+        namespace: "toolbar".to_string(),
+        method: "reportActionState".to_string(),
+        args: serde_json::json!({ "actionId": "mc-helper-mode", "stateId": "inline" }),
+    }) {
+        Ok(_) => panic!("a report without paneId must be rejected"),
+        Err(error) => assert!(error.contains("paneId"), "{error}"),
+    }
 }
 
 #[test]

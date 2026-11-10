@@ -3288,6 +3288,7 @@ mod tests {
         senders
             .terminal
             .send(NativePluginTerminalRequest {
+                plugin_id: "plugin.test".to_string(),
                 request_id: "terminal-clear".to_string(),
                 action: NativePluginTerminalAction::ClearBuffer {
                     node_id: "node-test".to_string(),
@@ -3929,6 +3930,7 @@ read request
         senders
             .terminal
             .send(NativePluginTerminalRequest {
+                plugin_id: "plugin.release".to_string(),
                 request_id: "terminal-release".to_string(),
                 action: NativePluginTerminalAction::ClearBuffer {
                     node_id: "node-release".to_string(),

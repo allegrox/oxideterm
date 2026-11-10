@@ -18,8 +18,9 @@ use oxideterm_sftp::BackgroundTransferState;
 use serde_json::{Value, json};
 
 use super::{
-    TelnetSessionConfig, TerminalInputInterceptor, TerminalOutputProcessor, TerminalSessionId,
-    WorkspaceApp, WorkspaceOverlayIntent, plugin_entity, plugin_host, plugin_runtime,
+    PaneId, TelnetSessionConfig, TerminalInputInterceptor, TerminalOutputProcessor,
+    TerminalSessionId, WorkspaceApp, WorkspaceOverlayIntent, plugin_entity, plugin_host,
+    plugin_runtime,
 };
 
 mod ble;
@@ -192,6 +193,28 @@ impl WorkspaceApp {
                     },
                 });
                 plugin_runtime::PluginResponse::ok(request.request_id, json!(true))
+            }
+            NativePluginTerminalAction::ReportToolbarActionState {
+                action_id,
+                state_id,
+                pane_id,
+            } => {
+                // The plugin resolved the chip click; the host applies the
+                // reported state only while the pane is still open. The
+                // overlay anchor takes the window processing this batch.
+                let pane_id = PaneId(pane_id);
+                let applied = self.tab_host.read(cx).panes().contains_key(&pane_id);
+                if applied {
+                    self.apply_plugin_toolbar_state(
+                        &request.plugin_id,
+                        &action_id,
+                        &state_id,
+                        pane_id,
+                        Some(window.window_handle()),
+                        cx,
+                    );
+                }
+                plugin_runtime::PluginResponse::ok(request.request_id, json!(applied))
             }
         };
         let _ = request.response_tx.send(response);
@@ -1699,6 +1722,18 @@ impl WorkspaceApp {
                             // delivery: it is the same display-only pane
                             // effect with the same lifecycle handling.
                             return Some(native_plugin_terminal_response(
+                                &plugin_id,
+                                call,
+                                &request_senders.terminal,
+                            ));
+                        }
+                        if call.namespace == "toolbar" && call.method == "reportActionState" {
+                            // The plugin resolved the chip click semantics;
+                            // the state lands on the GPUI thread through the
+                            // terminal request channel under the calling
+                            // plugin's identity.
+                            return Some(native_plugin_terminal_response(
+                                &plugin_id,
                                 call,
                                 &request_senders.terminal,
                             ));
@@ -1808,6 +1843,7 @@ impl WorkspaceApp {
                             )
                         {
                             return Some(native_plugin_terminal_response(
+                                &plugin_id,
                                 call,
                                 &request_senders.terminal,
                             ));
@@ -1823,6 +1859,7 @@ impl WorkspaceApp {
                                 ));
                             }
                             return Some(native_plugin_terminal_response(
+                                &plugin_id,
                                 call,
                                 &request_senders.terminal,
                             ));
