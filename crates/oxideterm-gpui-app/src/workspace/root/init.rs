@@ -542,9 +542,19 @@ impl WorkspaceApp {
         });
         plugin_entity.update(cx, |plugins, _cx| {
             plugins.set_plugin_deactivation_sink(plugin_deactivation_tx);
-            // The helper is mode-gated: its feature surface activates it on
-            // demand, so it must not start with the supervisor bootstrap.
-            plugins.defer_bootstrap_activation(mc_helper::MC_HELPER_PLUGIN_ID.to_string());
+            // Toolbar plugins are mode-gated: the generic toolbar surface
+            // starts their runtimes from pane states on demand, so they must
+            // not start with the supervisor bootstrap.
+            let toolbar_plugin_ids = plugins
+                .registry()
+                .contributions()
+                .terminal_toolbar_actions
+                .iter()
+                .map(|entry| entry.plugin_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            for plugin_id in toolbar_plugin_ids {
+                plugins.defer_bootstrap_activation(plugin_id);
+            }
         });
         plugin_lifecycle::spawn_ble_notification_dispatcher(
             ble_notification_router.clone(),
@@ -716,10 +726,7 @@ impl WorkspaceApp {
             ai_entity,
             acp_entity,
             mosh_plugin_sessions: Arc::new(oxideterm_mosh::MoshPluginSessions::default()),
-            mc_helper_panel_timer_active: false,
-            mc_helper_panel_countdown: Self::MC_HELPER_PANEL_REFRESH_SECS as u8,
-            mc_helper_owner_pane_id: None,
-            mc_helper_owner_window: None,
+            plugin_overlay_anchor: None,
             plugin_toolbar_states: HashMap::new(),
             skill_registry,
             skill_workspace_root,

@@ -186,16 +186,6 @@
       "line_ending_cr": "CR",
       "line_ending_none": "そのまま"
     },
-    "mc_helper": {
-      "button": "MC ヘルパー",
-      "mode_off": "オフ",
-      "mode_inline": "インライン",
-      "mode_overlay": "オーバーレイ",
-      "unavailable_hint": "MicroCon Helper プラグインが未インストールか無効です",
-      "hint_baud": "現在のボーレート",
-      "hint_battery": "バッテリー残量",
-      "hint_temp": "デバイス温度"
-    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",

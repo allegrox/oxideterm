@@ -186,16 +186,6 @@
       "line_ending_cr": "CR",
       "line_ending_none": "Thô"
     },
-    "mc_helper": {
-      "button": "MC Helper",
-      "mode_off": "Tắt",
-      "mode_inline": "Nội tuyến",
-      "mode_overlay": "Lớp phủ",
-      "unavailable_hint": "Tiện ích MicroCon Helper chưa được cài đặt hoặc đang bị tắt.",
-      "hint_baud": "Tốc độ baud hiện tại",
-      "hint_battery": "Mức pin còn lại",
-      "hint_temp": "Nhiệt độ thiết bị"
-    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",

@@ -277,16 +277,6 @@
       "line_ending_cr": "CR",
       "line_ending_none": "原样"
     },
-    "mc_helper": {
-      "button": "MC 助手",
-      "mode_off": "关闭",
-      "mode_inline": "内联",
-      "mode_overlay": "浮窗",
-      "unavailable_hint": "MicroCon Helper 插件未安装或已禁用",
-      "hint_baud": "当前波特率",
-      "hint_battery": "电池剩余电量",
-      "hint_temp": "设备温度"
-    },
     "recording": {
       "started": "终端录制已开始",
       "discarded": "终端录制已丢弃",

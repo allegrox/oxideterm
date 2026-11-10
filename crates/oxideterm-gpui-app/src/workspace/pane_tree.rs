@@ -439,9 +439,9 @@ impl WorkspaceApp {
                 // click handler that normally activates and focuses the pane
                 // never runs. Clicking the chip is a pane-level interaction:
                 // activate the clicked pane first so the synchronous overlay
-                // handover (bindPanel activeTarget, render gate, countdown)
-                // targets the pane that owns the click; keyboard focus lands
-                // on the next frame through needs_active_pane_focus.
+                // handover (anchor claim and render gate) targets the pane
+                // that owns the click; keyboard focus lands on the next frame
+                // through needs_active_pane_focus.
                 let tab_id = self
                     .tab_host
                     .read(cx)
@@ -651,9 +651,9 @@ impl WorkspaceApp {
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(&session_id);
         }
-        // The overlay panel is pane-anchored; losing its owner downgrades
-        // the mode so the panel chrome and telemetry loop stop with it.
-        self.mc_helper_owner_pane_closed(pane_id, cx);
+        // Toolbar states are pane-anchored; dropping them releases the
+        // overlay anchor and re-derives the affected plugin runtimes.
+        self.plugin_toolbar_pane_closed(pane_id, cx);
         if self
             .ai_entity
             .read(cx)

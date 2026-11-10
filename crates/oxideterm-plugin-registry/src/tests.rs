@@ -2759,6 +2759,7 @@ fn disabled_or_loading_declarative_buttons_are_not_actionable() {
         description: None,
         placeholder: None,
         icon: None,
+        tooltip: None,
         variant: None,
         tone: None,
         size: None,
@@ -3000,9 +3001,11 @@ fn terminal_toolbar_contributions_validate_ids_and_default_state() {
         states: vec![NativePluginTerminalToolbarStateDef {
             id: "off".to_string(),
             label_key: "terminal.demo.off".to_string(),
+            overlay: false,
         }],
         default_state: "off".to_string(),
         disabled_hint_key: None,
+        overlay_tab: None,
     };
     assert!(
         validate_native_plugin_contributions(&NativePluginContributes {
@@ -3031,6 +3034,90 @@ fn terminal_toolbar_contributions_validate_ids_and_default_state() {
     assert!(
         error.contains("Duplicate contributes.terminalToolbar id"),
         "{error}"
+    );
+}
+
+#[test]
+fn terminal_toolbar_overlay_states_validate_anchor_tab() {
+    let state = |id: &str, overlay: bool| NativePluginTerminalToolbarStateDef {
+        id: id.to_string(),
+        label_key: format!("terminal.demo.{id}"),
+        overlay,
+    };
+    let tab = || NativePluginTabDef {
+        id: "demo-tab".to_string(),
+        title: "Demo".to_string(),
+        icon: "star".to_string(),
+    };
+    let action = |states: Vec<NativePluginTerminalToolbarStateDef>, overlay_tab: Option<&str>| {
+        NativePluginTerminalToolbarActionDef {
+            id: "demo-mode".to_string(),
+            label_key: "terminal.demo.button".to_string(),
+            states,
+            default_state: "off".to_string(),
+            disabled_hint_key: None,
+            overlay_tab: overlay_tab.map(str::to_string),
+        }
+    };
+
+    for (label, action, tabs, expected) in [
+        (
+            "a second overlay state is rejected",
+            action(
+                vec![
+                    state("off", false),
+                    state("inline", true),
+                    state("overlay", true),
+                ],
+                Some("demo-tab"),
+            ),
+            Some(vec![tab()]),
+            "more than one overlay state",
+        ),
+        (
+            "an overlay state without overlayTab is rejected",
+            action(vec![state("off", false), state("overlay", true)], None),
+            Some(vec![tab()]),
+            "requires overlayTab",
+        ),
+        (
+            "overlayTab pointing at an undeclared tab is rejected",
+            action(
+                vec![state("off", false), state("overlay", true)],
+                Some("other-tab"),
+            ),
+            Some(vec![tab()]),
+            "is not a declared tab",
+        ),
+        (
+            "overlayTab without any contributed tabs is rejected",
+            action(
+                vec![state("off", false), state("overlay", true)],
+                Some("demo-tab"),
+            ),
+            None,
+            "is not a declared tab",
+        ),
+    ] {
+        let error = validate_native_plugin_contributions(&NativePluginContributes {
+            tabs,
+            terminal_toolbar: Some(vec![action]),
+            ..NativePluginContributes::default()
+        })
+        .unwrap_err();
+        assert!(error.contains(expected), "{label}: {error}");
+    }
+
+    assert!(
+        validate_native_plugin_contributions(&NativePluginContributes {
+            tabs: Some(vec![tab()]),
+            terminal_toolbar: Some(vec![action(
+                vec![state("off", false), state("overlay", true)],
+                Some("demo-tab"),
+            )]),
+            ..NativePluginContributes::default()
+        })
+        .is_ok()
     );
 }
 
@@ -3236,14 +3323,17 @@ fn sample_contributes() -> NativePluginContributes {
                 NativePluginTerminalToolbarStateDef {
                     id: "off".to_string(),
                     label_key: "terminal.demo.off".to_string(),
+                    overlay: false,
                 },
                 NativePluginTerminalToolbarStateDef {
                     id: "on".to_string(),
                     label_key: "terminal.demo.on".to_string(),
+                    overlay: false,
                 },
             ],
             default_state: "off".to_string(),
             disabled_hint_key: Some("terminal.demo.unavailable".to_string()),
+            overlay_tab: None,
         }]),
     }
 }

@@ -27,7 +27,6 @@ mod knowledge;
 mod local_sessions;
 mod local_shell_launcher;
 mod local_terminal_background;
-mod mc_helper;
 mod new_connection;
 mod notification_center;
 mod onboarding;
@@ -895,19 +894,11 @@ pub(crate) struct WorkspaceApp {
     ai_entity: Entity<ai_state::AiWorkspaceEntity>,
     acp_entity: Entity<acp_workspace::AcpWorkspaceEntity>,
     mosh_plugin_sessions: Arc<oxideterm_mosh::MoshPluginSessions>,
-    // In-memory MC helper state; never persisted. Each terminal pane owns its
-    // tri-state chip mode, and the plugin lifecycle (start/stop) derives from
-    // those pane modes. The overlay panel anchors to the pane currently in
-    // Overlay mode.
-    // Single-flight flag for the overlay panel's telemetry loop.
-    mc_helper_panel_timer_active: bool,
-    // Host-owned countdown (seconds); hitting zero fires the device poll, so
-    // panel re-renders can never desync or restart the cadence.
-    mc_helper_panel_countdown: u8,
-    // Pane (and window) currently in Overlay mode; the unique floating card
-    // anchors there and shows only while that pane holds focus.
-    mc_helper_owner_pane_id: Option<PaneId>,
-    mc_helper_owner_window: Option<gpui::AnyWindowHandle>,
+    // Workspace-unique overlay anchor for a plugin toolbar state that
+    // declares `overlay`; in-memory only, never persisted. The host owns the
+    // anchor, the render gate, and the card chrome, while the plugin owns the
+    // card content and refresh semantics.
+    plugin_overlay_anchor: Option<plugin_toolbar::PluginOverlayAnchor>,
     // Authoritative per-pane toolbar state for plugin-contributed chips:
     // (plugin id, action id, pane id) -> state id. A missing entry means the
     // action's declared default state; the pane's toolbar specs are only a

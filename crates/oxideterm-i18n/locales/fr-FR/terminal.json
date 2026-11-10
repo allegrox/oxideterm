@@ -186,16 +186,6 @@
       "line_ending_cr": "CR",
       "line_ending_none": "Brut"
     },
-    "mc_helper": {
-      "button": "MC Helper",
-      "mode_off": "Désactivé",
-      "mode_inline": "En ligne",
-      "mode_overlay": "Superposé",
-      "unavailable_hint": "L'extension MicroCon Helper n'est pas installée ou est désactivée.",
-      "hint_baud": "Vitesse de bauds actuelle",
-      "hint_battery": "Niveau de batterie",
-      "hint_temp": "Température de l'appareil"
-    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",

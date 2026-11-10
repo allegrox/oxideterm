@@ -1,12 +1,30 @@
 use super::*;
 
+/// Workspace-unique overlay anchor claimed by the pane whose toolbar state
+/// declares `overlay`. The host owns the anchor, the render gate, the card
+/// chrome, and the visibility events; the plugin owns the card content and
+/// every semantic attached to the state id.
+#[derive(Clone)]
+pub(in crate::workspace) struct PluginOverlayAnchor {
+    pub plugin_id: String,
+    pub action_id: String,
+    pub pane_id: PaneId,
+    pub window: Option<gpui::AnyWindowHandle>,
+    /// Last visibility value delivered to the plugin; the poll only emits
+    /// changes so the plugin never receives duplicate notifications.
+    pub visible: bool,
+    /// Whether the visibility poll loop is running for this anchor. Carried
+    /// over when a new anchor preempts an old one so a single loop serves it.
+    pub timer_active: bool,
+}
+
 /// Generic machinery for plugin-contributed terminal toolbar chips. The
 /// manifest (`contributes.terminalToolbar`) is the discovery channel: the host
 /// renders one chip per contributed action on every terminal pane, stores the
 /// per-pane state id, and reports clicks by `plugin_id:action_id`. State ids
-/// are opaque here; any feature lifecycle bound to an action (e.g. the
-/// microcon-helper overlay) lives in that feature's own surface.
-
+/// are opaque here; a state may declare `overlay`, which turns the chip into
+/// the anchor primitive below: the host pins a card to the pane, gates it on
+/// focus, and forwards visibility events while the plugin renders the content.
 impl WorkspaceApp {
     /// Installed, enabled, and activatable as a process runtime. Mirrors the
     /// connection-plugin predicate; permission review blocks activation.
@@ -67,7 +85,7 @@ impl WorkspaceApp {
     }
 
     /// Stores the state one pane reports for a contributed action, runs the
-    /// feature lifecycle bound to that action (if any), and re-pushes the pane
+    /// generic overlay lifecycle for `overlay` states, and re-pushes the pane
     /// specs. The state map is the authority; specs are a render mirror.
     pub(in crate::workspace) fn apply_plugin_toolbar_state(
         &mut self,
@@ -78,28 +96,414 @@ impl WorkspaceApp {
         window_handle: Option<gpui::AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .plugin_toolbar_definition(plugin_id, action_id, cx)
-            .is_none()
-        {
+        let Some(definition) = self.plugin_toolbar_definition(plugin_id, action_id, cx) else {
             return;
-        }
+        };
         self.plugin_toolbar_states.insert(
             (plugin_id.to_string(), action_id.to_string(), pane_id),
             state_id.to_string(),
         );
-        if plugin_id == mc_helper::MC_HELPER_PLUGIN_ID
-            && action_id == mc_helper::MC_HELPER_TOOLBAR_ACTION_ID
+        let overlay = definition
+            .states
+            .iter()
+            .find(|state| state.id == state_id)
+            .is_some_and(|state| state.overlay);
+        self.apply_plugin_overlay_lifecycle(
+            plugin_id,
+            action_id,
+            overlay,
+            pane_id,
+            window_handle,
+            cx,
+        );
+        self.sync_plugin_toolbar_state(cx);
+    }
+
+    /// Claims or releases the workspace-unique overlay anchor for the pane's
+    /// reported state. A claim preempts a different pane's anchor by demoting
+    /// that pane's action to its declared default state; a release happens
+    /// when the anchored pane leaves the overlay state. The runtime is
+    /// started before `toolbar.overlayOpened` so the plugin process can
+    /// receive it, and stopped only after `toolbar.overlayClosed` so a
+    /// closing plugin still sees the event.
+    fn apply_plugin_overlay_lifecycle(
+        &mut self,
+        plugin_id: &str,
+        action_id: &str,
+        overlay: bool,
+        pane_id: PaneId,
+        window_handle: Option<gpui::AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let anchored_here = self.plugin_overlay_anchor.as_ref().is_some_and(|anchor| {
+            (anchor.plugin_id.as_str(), anchor.pane_id) == (plugin_id, pane_id)
+        });
+        if overlay {
+            // Any anchor that is not this pane's is displaced by the claim.
+            let preempted = if anchored_here {
+                None
+            } else {
+                self.plugin_overlay_anchor.clone()
+            };
+            if let Some(previous) = &preempted {
+                // The preempted pane falls back to its declared default so the
+                // chip mirror and the runtime agree with the lost anchor; a
+                // definition removed by a plugin update has nothing to demote.
+                if let Some(definition) =
+                    self.plugin_toolbar_definition(&previous.plugin_id, &previous.action_id, cx)
+                {
+                    self.plugin_toolbar_states.insert(
+                        (
+                            previous.plugin_id.clone(),
+                            previous.action_id.clone(),
+                            previous.pane_id,
+                        ),
+                        definition.default_state,
+                    );
+                }
+                self.plugin_overlay_anchor = None;
+            }
+            let claimed = self.plugin_overlay_anchor.is_none();
+            if claimed {
+                let timer_active = preempted
+                    .as_ref()
+                    .map(|anchor| anchor.timer_active)
+                    .unwrap_or(false);
+                self.plugin_overlay_anchor = Some(PluginOverlayAnchor {
+                    plugin_id: plugin_id.to_string(),
+                    action_id: action_id.to_string(),
+                    pane_id,
+                    window: window_handle,
+                    visible: false,
+                    timer_active,
+                });
+            }
+            self.sync_plugin_toolbar_runtime(plugin_id, cx);
+            if let Some(previous) = &preempted {
+                if previous.plugin_id != plugin_id {
+                    self.sync_plugin_toolbar_runtime(&previous.plugin_id, cx);
+                }
+            }
+            if claimed {
+                self.dispatch_native_plugin_event(
+                    plugin_id.to_string(),
+                    "toolbar.overlayOpened",
+                    serde_json::json!({ "actionId": action_id, "paneId": pane_id.0 }),
+                    cx,
+                );
+                self.ensure_plugin_overlay_visibility_timer(cx);
+            }
+        } else if anchored_here {
+            if let Some(anchor) = self.plugin_overlay_anchor.take() {
+                self.dispatch_native_plugin_event(
+                    anchor.plugin_id,
+                    "toolbar.overlayClosed",
+                    serde_json::json!({ "actionId": anchor.action_id, "paneId": pane_id.0 }),
+                    cx,
+                );
+            }
+            self.sync_plugin_toolbar_runtime(plugin_id, cx);
+        } else {
+            self.sync_plugin_toolbar_runtime(plugin_id, cx);
+        }
+    }
+
+    /// Starts or stops a toolbar plugin's runtime from the authoritative
+    /// state map: engaged means at least one pane reports a state other than
+    /// the action's declared default. Entries whose definition disappeared
+    /// (plugin update) are ignored, matching the chip render fallback.
+    fn sync_plugin_toolbar_runtime(&mut self, plugin_id: &str, cx: &mut Context<Self>) {
+        let engaged =
+            self.plugin_toolbar_states
+                .iter()
+                .any(|((entry_plugin, action_id, _), state)| {
+                    entry_plugin == plugin_id
+                        && self
+                            .plugin_toolbar_definition(entry_plugin, action_id, cx)
+                            .is_some_and(|definition| state != &definition.default_state)
+                });
+        let resolver = self.native_plugin_host_api_resolver(cx);
+        self.plugin_entity.update(cx, |plugins, _cx| {
+            if engaged {
+                let _ = plugins.start_runtime_plugin_activation(plugin_id, resolver);
+            } else {
+                plugins.stop_runtime_plugin(plugin_id);
+            }
+        });
+    }
+
+    /// Single-flight 1s poll that reports focus changes of the anchored pane
+    /// to the plugin as `toolbar.overlayVisibilityChanged`. The loop owns no
+    /// business semantics and self-terminates once the anchor is gone; while
+    /// the anchor merely moves to another pane the same loop keeps serving.
+    fn ensure_plugin_overlay_visibility_timer(&mut self, cx: &mut Context<Self>) {
+        let Some(anchor) = self.plugin_overlay_anchor.as_mut() else {
+            return;
+        };
+        if anchor.timer_active {
+            return;
+        }
+        anchor.timer_active = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                gpui::Timer::after(std::time::Duration::from_secs(1)).await;
+                let Ok(keep) = this.update(cx, |workspace, cx| {
+                    let Some(anchor) = workspace.plugin_overlay_anchor.as_ref() else {
+                        return false;
+                    };
+                    let visible = workspace.active_pane_id(cx) == Some(anchor.pane_id);
+                    if visible != anchor.visible {
+                        let plugin_id = anchor.plugin_id.clone();
+                        let payload = serde_json::json!({
+                            "actionId": anchor.action_id,
+                            "paneId": anchor.pane_id.0,
+                            "visible": visible,
+                        });
+                        if let Some(anchor) = workspace.plugin_overlay_anchor.as_mut() {
+                            anchor.visible = visible;
+                        }
+                        workspace.dispatch_native_plugin_event(
+                            plugin_id,
+                            "toolbar.overlayVisibilityChanged",
+                            payload,
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                    true
+                }) else {
+                    break;
+                };
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Whether the overlay card may render in this window; the call site
+    /// additionally requires the window to be focused, so an unfocused
+    /// anchor window shows nothing.
+    pub(in crate::workspace) fn plugin_overlay_targets_window(
+        &self,
+        window: gpui::AnyWindowHandle,
+    ) -> bool {
+        self.plugin_overlay_anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.window == Some(window))
+    }
+
+    /// The overlay anchor is alive while its pane still exists; a closed pane
+    /// releases the anchor, so the card never follows focus onto another pane.
+    pub(in crate::workspace) fn plugin_overlay_visible(&self, cx: &App) -> bool {
+        self.plugin_overlay_anchor
+            .as_ref()
+            .is_some_and(|anchor| self.tab_host.read(cx).panes().contains_key(&anchor.pane_id))
+    }
+
+    /// Bottom-right overlay card rendering the anchored action's `overlayTab`
+    /// runtime view. Renders nothing until the activated plugin registers its
+    /// view; content refresh is the plugin's responsibility.
+    pub(in crate::workspace) fn render_plugin_overlay_panel(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.tokens.ui;
+        let Some(anchor) = self.plugin_overlay_anchor.clone() else {
+            return div().into_any_element();
+        };
+        let Some(definition) =
+            self.plugin_toolbar_definition(&anchor.plugin_id, &anchor.action_id, cx)
+        else {
+            return div().into_any_element();
+        };
+        let Some(tab_id) = definition.overlay_tab.as_deref() else {
+            return div().into_any_element();
+        };
+        let Some(mut view) = self
+            .plugin_entity
+            .read(cx)
+            .registry()
+            .contributions()
+            .runtime_tab_view(&anchor.plugin_id, tab_id)
+        else {
+            return div().into_any_element();
+        };
+        super::plugin_ui::localize_native_plugin_schema(&mut view.schema, self.i18n.locale());
+        let title = view
+            .schema
+            .title
+            .clone()
+            .unwrap_or_else(|| view.title.clone());
+        let body = self.render_native_plugin_declarative_schema(
+            &anchor.plugin_id,
+            "tab",
+            &view.tab_id,
+            &view.schema,
+            cx,
+        );
+        div()
+            .absolute()
+            .bottom(px(12.0))
+            .right(px(12.0))
+            .w(px(340.0))
+            .max_h(px(420.0))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.bg_panel))
+            .shadow_lg()
+            // Panel clicks must not fall through to the terminal surface and
+            // steal focus; the schema body keeps its own blur/select handling.
+            .on_mouse_down(MouseButton::Left, |_, _, cx: &mut App| {
+                cx.stop_propagation();
+            })
+            .on_scroll_wheel(cx.listener(|this, _event, _window, cx| {
+                this.close_native_plugin_select(cx);
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_between()
+                    .px(px(10.0))
+                    .py(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(self.tokens.metrics.ui_text_sm))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(theme.text))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .id("plugin-overlay-close")
+                            .cursor_pointer()
+                            .px(px(4.0))
+                            .text_size(px(self.tokens.metrics.ui_text_sm))
+                            .text_color(rgb(theme.text_muted))
+                            .child("×")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _event, window, cx| {
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    // Closing the card equals the toolbar chip
+                                    // cycling to the default state: it releases
+                                    // the anchor and re-derives the runtime.
+                                    let Some(anchor) = this.plugin_overlay_anchor.clone() else {
+                                        return;
+                                    };
+                                    let Some(definition) = this.plugin_toolbar_definition(
+                                        &anchor.plugin_id,
+                                        &anchor.action_id,
+                                        cx,
+                                    ) else {
+                                        return;
+                                    };
+                                    this.apply_plugin_toolbar_state(
+                                        &anchor.plugin_id,
+                                        &anchor.action_id,
+                                        &definition.default_state,
+                                        anchor.pane_id,
+                                        anchor.window,
+                                        cx,
+                                    );
+                                }),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    // The card's height is content-driven (no definite height),
+                    // so the body must size to its content; a flex_1 basis of
+                    // zero would collapse it to an empty window frame.
+                    .max_h(px(370.0))
+                    .overflow_y_scrollbar()
+                    .px(px(10.0))
+                    .pb(px(10.0))
+                    .child(body),
+            )
+            .into_any_element()
+    }
+
+    /// Removes every toolbar state entry owned by a closed pane, releases the
+    /// overlay anchor it held, and re-derives the runtime of every affected
+    /// plugin. Reconnecting opens a fresh pane that seeds the default state.
+    pub(in crate::workspace) fn plugin_toolbar_pane_closed(
+        &mut self,
+        pane_id: &PaneId,
+        cx: &mut Context<Self>,
+    ) {
+        let mut affected = Vec::new();
+        self.plugin_toolbar_states
+            .retain(|(plugin_id, _, entry_pane), _| {
+                if entry_pane == pane_id {
+                    if !affected.contains(plugin_id) {
+                        affected.push(plugin_id.clone());
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        if self
+            .plugin_overlay_anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.pane_id == *pane_id)
         {
-            self.apply_mc_helper_toolbar_lifecycle(state_id, pane_id, window_handle, cx);
+            if let Some(anchor) = self.plugin_overlay_anchor.take() {
+                self.dispatch_native_plugin_event(
+                    anchor.plugin_id,
+                    "toolbar.overlayClosed",
+                    serde_json::json!({ "actionId": anchor.action_id, "paneId": pane_id.0 }),
+                    cx,
+                );
+            }
+        }
+        for plugin_id in affected {
+            self.sync_plugin_toolbar_runtime(&plugin_id, cx);
         }
         self.sync_plugin_toolbar_state(cx);
     }
 
-    /// Removes every toolbar state entry owned by a closed pane.
-    pub(in crate::workspace) fn plugin_toolbar_pane_closed(&mut self, pane_id: &PaneId) {
-        self.plugin_toolbar_states
-            .retain(|(_, _, entry_pane), _| entry_pane != pane_id);
+    /// Locale bundles for the plugins contributing toolbar actions, keyed by
+    /// plugin id. Rebuilt on every sync so labels follow locale switches and
+    /// package updates without a cache to invalidate.
+    fn plugin_toolbar_locale_bundles(
+        &self,
+        contributions: &[plugin_host::NativePluginTerminalToolbarActionContribution],
+        cx: &App,
+    ) -> HashMap<String, HashMap<String, String>> {
+        let plugin_entity = self.plugin_entity.read(cx);
+        let tag = plugin_ui::native_plugin_locale_tag(self.i18n.locale());
+        let mut bundles = HashMap::new();
+        for entry in contributions {
+            if bundles.contains_key(&entry.plugin_id) {
+                continue;
+            }
+            let bundle = plugin_entity
+                .registry()
+                .plugins()
+                .iter()
+                .find(|plugin| plugin.manifest.id == entry.plugin_id)
+                .and_then(|plugin| {
+                    let locales_dir = plugin.manifest.locales.as_deref()?;
+                    Some(load_plugin_locale_bundle(
+                        &plugin.install_dir,
+                        locales_dir,
+                        tag,
+                    ))
+                })
+                .unwrap_or_default();
+            bundles.insert(entry.plugin_id.clone(), bundle);
+        }
+        bundles
     }
 
     /// Re-pushes every pane's contributed chip specs (state mirror + plugin
@@ -114,6 +518,7 @@ impl WorkspaceApp {
             .contributions()
             .terminal_toolbar_actions
             .clone();
+        let bundles = self.plugin_toolbar_locale_bundles(&contributions, cx);
         let panes = self
             .tab_host
             .read(cx)
@@ -122,7 +527,7 @@ impl WorkspaceApp {
             .map(|(pane_id, pane)| (*pane_id, pane.clone()))
             .collect::<Vec<_>>();
         for (pane_id, pane) in panes {
-            self.push_plugin_toolbar_specs(pane_id, &pane, &contributions, cx);
+            self.push_plugin_toolbar_specs(pane_id, &pane, &contributions, &bundles, cx);
         }
         cx.notify();
     }
@@ -142,7 +547,8 @@ impl WorkspaceApp {
             .contributions()
             .terminal_toolbar_actions
             .clone();
-        self.push_plugin_toolbar_specs(pane_id, pane, &contributions, cx);
+        let bundles = self.plugin_toolbar_locale_bundles(&contributions, cx);
+        self.push_plugin_toolbar_specs(pane_id, pane, &contributions, &bundles, cx);
     }
 
     fn push_plugin_toolbar_specs(
@@ -150,6 +556,7 @@ impl WorkspaceApp {
         pane_id: PaneId,
         pane: &gpui::Entity<TerminalPane>,
         contributions: &[plugin_host::NativePluginTerminalToolbarActionContribution],
+        bundles: &HashMap<String, HashMap<String, String>>,
         cx: &mut Context<Self>,
     ) {
         let specs = contributions
@@ -157,6 +564,15 @@ impl WorkspaceApp {
             .map(|entry| {
                 let def = &entry.definition;
                 let available = self.native_plugin_available(&entry.plugin_id, cx);
+                let bundle = bundles.get(&entry.plugin_id);
+                // A missing key shows the raw key, mirroring the host i18n
+                // fallback for untranslated labels.
+                let label = |key: &str| {
+                    bundle
+                        .and_then(|bundle| bundle.get(key))
+                        .cloned()
+                        .unwrap_or_else(|| key.to_string())
+                };
                 let state_id = self
                     .plugin_toolbar_state(&entry.plugin_id, &def.id, pane_id)
                     .cloned()
@@ -176,23 +592,83 @@ impl WorkspaceApp {
                     .unwrap_or(def.label_key.as_str());
                 TerminalToolbarActionSpec {
                     id: format!("{}:{}", entry.plugin_id, def.id).into(),
-                    label: format!(
-                        "{} {}",
-                        self.i18n.t(&def.label_key),
-                        self.i18n.t(state_label_key)
-                    ),
+                    label: format!("{} {}", label(&def.label_key), label(state_label_key)),
                     enabled: available,
                     active: state_id != def.default_state,
                     disabled_hint: if available {
                         None
                     } else {
-                        def.disabled_hint_key
-                            .as_ref()
-                            .map(|key| self.i18n.t(key).to_string())
+                        def.disabled_hint_key.as_ref().map(|key| label(key))
                     },
                 }
             })
             .collect::<Vec<_>>();
         pane.update(cx, |pane, cx| pane.set_toolbar_actions(specs, cx));
+    }
+}
+
+/// Reads one plugin's locale bundle for the current app locale. The chip must
+/// render while the plugin runtime is stopped, so the host reads the package
+/// files directly instead of asking the plugin process; a missing tag file
+/// falls back to English and an absent bundle leaves raw keys visible.
+fn load_plugin_locale_bundle(
+    install_dir: &Path,
+    locales_dir: &str,
+    tag: &str,
+) -> HashMap<String, String> {
+    let dir = install_dir.join(locales_dir);
+    for candidate in [tag, "en"] {
+        let Ok(text) = fs::read_to_string(dir.join(format!("{candidate}.json"))) else {
+            continue;
+        };
+        return parse_plugin_locale_bundle(&text);
+    }
+    HashMap::new()
+}
+
+fn parse_plugin_locale_bundle(text: &str) -> HashMap<String, String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .map(|object| {
+            object
+                .into_iter()
+                .filter_map(|(key, value)| value.as_str().map(|text| (key, text.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_plugin_locale_bundle_prefers_current_tag_and_falls_back_to_english() {
+        let dir = tempfile::tempdir().unwrap();
+        let locales = dir.path().join("locales");
+        std::fs::create_dir(&locales).unwrap();
+        std::fs::write(
+            locales.join("zh-CN.json"),
+            r#"{"toolbarButton":"MC 助手","toolbarModeOff":"关闭"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            locales.join("en.json"),
+            r#"{"toolbarButton":"MC Helper","toolbarModeOff":"Off"}"#,
+        )
+        .unwrap();
+
+        let zh = load_plugin_locale_bundle(dir.path(), "locales", "zh-CN");
+        assert_eq!(zh.get("toolbarButton").map(String::as_str), Some("MC 助手"));
+        assert_eq!(zh.get("toolbarModeOff").map(String::as_str), Some("关闭"));
+
+        let missing_tag = load_plugin_locale_bundle(dir.path(), "locales", "fr-FR");
+        assert_eq!(
+            missing_tag.get("toolbarButton").map(String::as_str),
+            Some("MC Helper")
+        );
+
+        assert!(load_plugin_locale_bundle(dir.path(), "absent", "zh-CN").is_empty());
     }
 }

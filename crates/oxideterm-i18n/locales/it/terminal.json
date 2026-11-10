@@ -186,16 +186,6 @@
       "line_ending_cr": "CR",
       "line_ending_none": "Grezzo"
     },
-    "mc_helper": {
-      "button": "MC Helper",
-      "mode_off": "Disattivato",
-      "mode_inline": "In linea",
-      "mode_overlay": "Sovrapposto",
-      "unavailable_hint": "Il plugin MicroCon Helper non è installato o è disabilitato.",
-      "hint_baud": "Baud rate attuale",
-      "hint_battery": "Livello batteria",
-      "hint_temp": "Temperatura del dispositivo"
-    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",

@@ -277,16 +277,6 @@
       "line_ending_cr": "CR",
       "line_ending_none": "Raw"
     },
-    "mc_helper": {
-      "button": "MC Helper",
-      "mode_off": "Off",
-      "mode_inline": "Inline",
-      "mode_overlay": "Overlay",
-      "unavailable_hint": "The MicroCon Helper plugin is not installed or is disabled.",
-      "hint_baud": "Current baud rate",
-      "hint_battery": "Battery level",
-      "hint_temp": "Device temperature"
-    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",

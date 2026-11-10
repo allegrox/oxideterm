@@ -611,7 +611,14 @@ pub(crate) fn validate_native_plugin_contributions(
                     action.id
                 ));
             }
+            if let Some(overlay_tab) = &action.overlay_tab {
+                validate_manifest_text_field(
+                    "contributes.terminalToolbar.overlayTab",
+                    overlay_tab,
+                )?;
+            }
             let mut state_ids = HashSet::new();
+            let mut overlay_states = 0usize;
             for state in &action.states {
                 validate_manifest_text_field("contributes.terminalToolbar.states.id", &state.id)?;
                 validate_manifest_text_field(
@@ -622,6 +629,35 @@ pub(crate) fn validate_native_plugin_contributions(
                     return Err(format!(
                         "Duplicate state \"{}\" in toolbar action \"{}\"",
                         state.id, action.id
+                    ));
+                }
+                if state.overlay {
+                    overlay_states += 1;
+                }
+            }
+            if overlay_states > 1 {
+                return Err(format!(
+                    "Toolbar action \"{}\" declares more than one overlay state",
+                    action.id
+                ));
+            }
+            if overlay_states == 1 {
+                // The host renders the overlay card from a contributed tab's
+                // runtime view, so an anchored state must name an existing tab.
+                let overlay_tab = action.overlay_tab.as_deref().ok_or_else(|| {
+                    format!(
+                        "Toolbar action \"{}\" with an overlay state requires overlayTab",
+                        action.id
+                    )
+                })?;
+                let known_tab = contributes
+                    .tabs
+                    .as_ref()
+                    .is_some_and(|tabs| tabs.iter().any(|tab| tab.id == overlay_tab));
+                if !known_tab {
+                    return Err(format!(
+                        "overlayTab \"{}\" of toolbar action \"{}\" is not a declared tab",
+                        overlay_tab, action.id
                     ));
                 }
             }

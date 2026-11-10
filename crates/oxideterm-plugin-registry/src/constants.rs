@@ -56,6 +56,7 @@ pub(crate) const NATIVE_PLUGIN_DECLARATIVE_UI_CONTROL_KINDS: &[&str] = &[
     "empty-state",
     "divider",
     "spacer",
+    "readout",
     "keyValue",
     "key-value",
     "keyValueRow",
