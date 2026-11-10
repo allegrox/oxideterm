@@ -96,6 +96,8 @@ default-members = ["crates/oxideterm-gpui-app"]
 resolver = "2"
 
 [patch.crates-io]
+# Diagnostic fork: WinRT keep-alive on GattSession (see vendor/btleplug patches).
+btleplug = { path = "vendor/btleplug" }
 alacritty_terminal = { path = "crates/alacritty-terminal" }
 gpui-pre = { path = "crates/gpui-ce/gpui" }
 gpui-pre-apple = { path = "crates/gpui-ce/gpui_apple" }
@@ -243,6 +245,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tower-service = "0.3"
 tracing = "0.1"
 tracing-appender = "0.2"
+tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tree-sitter = { version = "0.27.0", features = ["wasm"] }
 tree-sitter-bash = "0.23.3"

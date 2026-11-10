@@ -13,8 +13,12 @@ const LOG_FILE_NAME: &str = "oxideterm-native.log";
 const LEGACY_LOG_FILE_PREFIX: &str = "oxideterm-native.";
 const MAX_LOG_FILE_BYTES: u64 = 10 * 1024 * 1024;
 const OVERSIZED_LOG_ENTRY_MARKER: &[u8] = b"[oversized log entry omitted]\n";
-const DEFAULT_LOG_FILTER: &str = "warn,oxideterm_gpui_app=info,oxideterm_ssh=info";
-const DEBUG_LOG_FILTER: &str = "warn,oxideterm_gpui_app=debug,oxideterm_ssh=debug,gpui=info";
+// btleplug=trace is a Win/macOS notification-loss diagnostic addition: the
+// vendored crate logs via `log`, bridged below, and its OS-callback traces
+// decide whether the platform stack ever delivers notifications to us.
+const DEFAULT_LOG_FILTER: &str = "warn,oxideterm_gpui_app=info,oxideterm_ssh=info,btleplug=trace";
+const DEBUG_LOG_FILTER: &str =
+    "warn,oxideterm_gpui_app=debug,oxideterm_ssh=debug,gpui=info,btleplug=trace";
 
 struct SizeLimitedLogWriter {
     file: File,
@@ -140,6 +144,12 @@ pub(crate) fn init_file_logging(
     if subscriber.with(filter).try_init().is_err() {
         return Ok(None);
     }
+
+    // Forward `log` records (btleplug internals) into the tracing subscriber so
+    // the EnvFilter directives above apply to them as well.
+    let _ = tracing_log::LogTracer::builder()
+        .max_level(log::LevelFilter::Trace)
+        .init();
 
     tracing::info!(
         log_path = %log_path.display(),

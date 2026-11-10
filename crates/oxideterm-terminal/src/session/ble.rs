@@ -2129,6 +2129,16 @@ async fn run_ble_worker(
             return;
         };
         let notify_uuid = notify_char.uuid;
+        // TEMP ble-diag: capture the resolved ATT channels for the Win/Mac
+        // data-plane investigation; remove with the diag branch.
+        tracing::warn!(
+            "ble-diag link: notify={} write={} write_type={:?} config_mtu={:?} platform_mtu={}",
+            notify_char.uuid,
+            write_char.uuid,
+            write_type,
+            config.mtu,
+            peripheral.mtu()
+        );
         subscribed = Some(notify_char.clone());
         if let Err(error) = peripheral.subscribe(notify_char).await {
             // One bounded self-heal, not a blind retry loop: see
@@ -2143,6 +2153,21 @@ async fn run_ble_worker(
                 let _ = worker_tx.send_control(BleWorkerEvent::Failed(retry_error.to_string()));
                 return;
             }
+        }
+        // TEMP ble-diag: subscribe completed without error on this platform.
+        tracing::warn!("ble-diag subscribe ok; owned={owned}");
+        // Diagnostic fix candidate: Windows leaves legacy BLE 4.0 peripherals
+        // on power-saving link parameters unless the client asks, which can
+        // starve device->host notifications. Chrome requests this before use.
+        #[cfg(target_os = "windows")]
+        match peripheral
+            .request_connection_parameters(
+                btleplug::api::ConnectionParameterPreset::ThroughputOptimized,
+            )
+            .await
+        {
+            Ok(()) => tracing::warn!("ble-diag: ThroughputOptimized applied"),
+            Err(error) => tracing::warn!("ble-diag: request_connection_parameters: {error}"),
         }
         gatt_state
             .connected
@@ -2168,6 +2193,9 @@ async fn run_ble_worker(
         // cleanup below drops them together with the link.
         let mut gatt_routes: BleGattNotifyRoutes = std::collections::HashMap::new();
         let mut gatt_route_id: u64 = 0;
+        // TEMP ble-diag: bounded event trace for the Win/Mac investigation.
+        let mut diag_events = 0u8;
+        let mut diag_writes = 0u8;
         loop {
             tokio::select! {
                 // Close rides the cancel token, not the data channel, so it wins
@@ -2179,6 +2207,8 @@ async fn run_ble_worker(
                     // `Err` means the platform cannot answer the query; only a
                     // definite `false` proves the peer is gone.
                     if matches!(peripheral.is_connected().await, Ok(false)) {
+                        // TEMP ble-diag: link poll decided the peer is gone.
+                        tracing::warn!("ble-diag link-check: is_connected=false, closing");
                         let _ = worker_tx.send_control(BleWorkerEvent::Closed);
                         break;
                     }
@@ -2194,6 +2224,15 @@ async fn run_ble_worker(
                 notification = notifications.next() => {
                     match notification {
                         Some(notification) if notification.uuid == notify_uuid => {
+                            // TEMP ble-diag: first matched events only.
+                            if diag_events < 12 {
+                                diag_events += 1;
+                                tracing::warn!(
+                                    "ble-diag recv: uuid={} len={}",
+                                    notification.uuid,
+                                    notification.value.len()
+                                );
+                            }
                             let data = notification.value;
                             let data_len = data.len();
                             // Plugin routes mirror the terminal stream without
@@ -2215,6 +2254,17 @@ async fn run_ble_worker(
                             // Characteristics the terminal itself never subscribed
                             // to stream here only when a plugin route enabled them.
                             dispatch_gatt_notification(&gatt_routes, notification.uuid, &notification.value);
+                            // TEMP ble-diag: events on other characteristics are
+                            // dropped by the uuid filter; show what arrives.
+                            if diag_events < 12 {
+                                diag_events += 1;
+                                tracing::warn!(
+                                    "ble-diag other: uuid={} service={} len={}",
+                                    notification.uuid,
+                                    notification.service_uuid,
+                                    notification.value.len()
+                                );
+                            }
                         }
                         None => {
                             let _ = worker_tx.send_control(BleWorkerEvent::Closed);
@@ -2259,6 +2309,15 @@ async fn run_ble_worker(
                             tokio::select! {
                                 _ = close_token.cancelled() => break,
                                 written = write_with_mtu(&peripheral, write_char, &bytes, write_type, config.mtu) => {
+                                    // TEMP ble-diag: bounded write trace.
+                                    if diag_writes < 12 {
+                                        diag_writes += 1;
+                                        tracing::warn!(
+                                            "ble-diag write: {} bytes -> {:?}",
+                                            bytes.len(),
+                                            written.as_ref().map_err(|error| error.to_string())
+                                        );
+                                    }
                                     if let Err(error) = written {
                                         let _ = worker_tx
                                             .send_control(BleWorkerEvent::Failed(error.to_string()));
