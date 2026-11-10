@@ -186,6 +186,16 @@
       "line_ending_cr": "CR",
       "line_ending_none": "원본"
     },
+    "mc_helper": {
+      "button": "MC 헬퍼",
+      "mode_off": "끄기",
+      "mode_inline": "인라인",
+      "mode_overlay": "오버레이",
+      "unavailable_hint": "MicroCon Helper 플러그인이 설치되지 않았거나 비활성화되어 있습니다",
+      "hint_baud": "현재 보레이트",
+      "hint_battery": "배터리 잔량",
+      "hint_temp": "장치 온도"
+    },
     "recording": {
       "started": "Terminal recording started",
       "discarded": "Terminal recording discarded",
@@ -654,13 +664,13 @@
       "agent_installing": "에이전트 설치 중: {{percent}}% ({{transferred}} / {{total}} KiB)",
       "agent_starting": "에이전트 시작 중…"
     },
-      "ble": {
-        "connection_failed": "BLE 연결 실패: {error}",
-        "runtime_init_failed": "BLE 런타임 초기화 실패",
-        "adapter_index_out_of_range": "Bluetooth 어댑터 인덱스 {n}이(가) 범위를 벗어났습니다",
-        "service_not_found": "서비스 {uuid}를 찾을 수 없습니다",
-        "no_notify_write_pair": "선택한 서비스에 notify+write 특성 쌍이 없습니다"
-      }
+    "ble": {
+      "connection_failed": "BLE 연결 실패: {error}",
+      "runtime_init_failed": "BLE 런타임 초기화 실패",
+      "adapter_index_out_of_range": "Bluetooth 어댑터 인덱스 {n}이(가) 범위를 벗어났습니다",
+      "service_not_found": "서비스 {uuid}를 찾을 수 없습니다",
+      "no_notify_write_pair": "선택한 서비스에 notify+write 특성 쌍이 없습니다"
+    }
   },
   "search": {
     "placeholder": "검색",

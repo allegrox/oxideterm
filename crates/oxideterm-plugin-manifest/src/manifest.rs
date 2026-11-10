@@ -315,6 +315,11 @@ pub struct NativePluginDeclarativeUiSchema {
     pub sections: Vec<NativePluginDeclarativeUiSection>,
     #[serde(default)]
     pub controls: Vec<NativePluginDeclarativeUiControl>,
+    /// Optional free-form telemetry snapshot (e.g. panelStatus) that plugins
+    /// attach to a re-registered view so host chrome can render live values
+    /// without parsing the form itself.
+    #[serde(default)]
+    pub panel_status: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

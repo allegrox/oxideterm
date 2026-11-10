@@ -110,10 +110,29 @@ pub(in crate::workspace) struct NativePluginTerminalRequest {
 }
 
 pub(in crate::workspace) enum NativePluginTerminalAction {
-    WriteActive { text: String },
-    WriteNode { node_id: String, text: String },
-    ClearBuffer { node_id: String },
-    OpenTelnet { host: String, port: u16 },
+    WriteActive {
+        text: String,
+    },
+    WriteNode {
+        node_id: String,
+        text: String,
+    },
+    WriteLocal {
+        node_id: Option<String>,
+        text: String,
+    },
+    ClearBuffer {
+        node_id: String,
+    },
+    OpenTelnet {
+        host: String,
+        port: u16,
+    },
+    Notify {
+        title: String,
+        description: Option<String>,
+        variant: String,
+    },
 }
 
 /// Describes a plugin effect that must be applied with a live workspace window.

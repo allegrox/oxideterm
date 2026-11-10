@@ -1561,10 +1561,14 @@ fn terminal_input_interceptors_run_in_order_and_fail_open() {
         test_terminal_hook("timeout", "demo.timeout"),
         test_terminal_hook("second", "demo.second"),
     ];
-    let result = native_plugin_reduce_input_interceptors(b"ls", &hooks, |hook, args| {
-        match hook.registration_id.as_str() {
+    let result =
+        native_plugin_reduce_input_interceptors(b"ls", Some("42"), &hooks, |hook, args| match hook
+            .registration_id
+            .as_str()
+        {
             "first" => {
                 assert_eq!(args["data"], "ls");
+                assert_eq!(args["terminalId"], "42");
                 Some(json!({ "data": "sudo ls" }))
             }
             "timeout" => None,
@@ -1573,24 +1577,60 @@ fn terminal_input_interceptors_run_in_order_and_fail_open() {
                 Some(json!("sudo ls -la"))
             }
             _ => unreachable!(),
-        }
-    });
+        });
 
     match result {
         TerminalInputInterceptorResult::Continue(bytes) => {
             assert_eq!(bytes, b"sudo ls -la");
         }
         TerminalInputInterceptorResult::Suppress => panic!("input should not be suppressed"),
+        TerminalInputInterceptorResult::LocalEcho { .. } => {
+            panic!("input should not carry a local echo")
+        }
     }
 }
 
 #[test]
 fn terminal_input_interceptor_null_suppresses_input() {
     let hooks = vec![test_terminal_hook("suppress", "demo.suppress")];
-    let result = native_plugin_reduce_input_interceptors(b"rm -rf /tmp/demo", &hooks, |_, _| {
-        Some(Value::Null)
-    });
+    let result =
+        native_plugin_reduce_input_interceptors(b"rm -rf /tmp/demo", None, &hooks, |_, _| {
+            Some(Value::Null)
+        });
     assert!(matches!(result, TerminalInputInterceptorResult::Suppress));
+}
+
+#[test]
+fn terminal_input_interceptor_echo_holds_and_releases() {
+    let hooks = vec![test_terminal_hook("echo", "demo.echo")];
+    // Local echo with suppress: bytes render on the screen only.
+    let held = native_plugin_reduce_input_interceptors(b"a", None, &hooks, |_, _| {
+        Some(json!({ "echo": "a", "suppress": true }))
+    });
+    match held {
+        TerminalInputInterceptorResult::LocalEcho { echo, send } => {
+            assert_eq!(echo, b"a");
+            assert!(send.is_none());
+        }
+        TerminalInputInterceptorResult::Continue(_) => {
+            panic!("echoed input should not be forwarded")
+        }
+        TerminalInputInterceptorResult::Suppress => panic!("echoed input should not vanish"),
+    }
+    // Release: erase bytes are displayed locally while the full line goes out.
+    let released = native_plugin_reduce_input_interceptors(b"x", None, &hooks, |_, _| {
+        Some(json!({ "echo": "\u{8} \u{8}", "text": "/mx" }))
+    });
+    match released {
+        TerminalInputInterceptorResult::LocalEcho { echo, send } => {
+            assert_eq!(echo, b"\x08 \x08");
+            assert_eq!(send.unwrap(), b"/mx");
+        }
+        TerminalInputInterceptorResult::Continue(_) => {
+            panic!("release should keep its local erase echo")
+        }
+        TerminalInputInterceptorResult::Suppress => panic!("release should still forward"),
+    }
 }
 
 #[test]
