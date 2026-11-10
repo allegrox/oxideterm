@@ -1537,7 +1537,7 @@ fn terminal_write_host_calls_parse_text_and_node_id() {
         namespace: "toolbar".to_string(),
         method: "reportActionState".to_string(),
         args: serde_json::json!({
-            "actionId": "mc-helper-mode",
+            "actionId": "demo-mode",
             "stateId": "inline",
             "paneId": 42,
         }),
@@ -1546,7 +1546,7 @@ fn terminal_write_host_calls_parse_text_and_node_id() {
     assert!(matches!(
         report,
         NativePluginTerminalAction::ReportToolbarActionState { ref action_id, ref state_id, pane_id }
-            if action_id == "mc-helper-mode" && state_id == "inline" && pane_id == 42
+            if action_id == "demo-mode" && state_id == "inline" && pane_id == 42
     ));
 
     // A report without the pane identity must be rejected: the host may not
@@ -1555,7 +1555,7 @@ fn terminal_write_host_calls_parse_text_and_node_id() {
         request_id: "toolbar-report-2".to_string(),
         namespace: "toolbar".to_string(),
         method: "reportActionState".to_string(),
-        args: serde_json::json!({ "actionId": "mc-helper-mode", "stateId": "inline" }),
+        args: serde_json::json!({ "actionId": "demo-mode", "stateId": "inline" }),
     }) {
         Ok(_) => panic!("a report without paneId must be rejected"),
         Err(error) => assert!(error.contains("paneId"), "{error}"),
