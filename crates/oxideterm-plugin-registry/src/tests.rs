@@ -1927,6 +1927,20 @@ fn manifest_only_contributions_follow_persisted_enable_state() {
     assert_eq!(contributions.connection_hooks.len(), 1);
     assert_eq!(contributions.api_commands.len(), 1);
     assert_eq!(contributions.host_monitors.len(), 1);
+    assert_eq!(contributions.terminal_toolbar_actions.len(), 1);
+    assert_eq!(
+        contributions.terminal_toolbar_actions[0]
+            .definition
+            .default_state,
+        "off"
+    );
+    assert_eq!(
+        contributions.terminal_toolbar_actions[0]
+            .definition
+            .states
+            .len(),
+        2
+    );
     assert_eq!(
         contributions
             .host_monitor("com.example.demo", "workers")
@@ -2979,6 +2993,48 @@ fn malformed_contribution_definition_is_rejected_with_diagnostic() {
 }
 
 #[test]
+fn terminal_toolbar_contributions_validate_ids_and_default_state() {
+    let action = NativePluginTerminalToolbarActionDef {
+        id: "demo-mode".to_string(),
+        label_key: "terminal.demo.button".to_string(),
+        states: vec![NativePluginTerminalToolbarStateDef {
+            id: "off".to_string(),
+            label_key: "terminal.demo.off".to_string(),
+        }],
+        default_state: "off".to_string(),
+        disabled_hint_key: None,
+    };
+    assert!(
+        validate_native_plugin_contributions(&NativePluginContributes {
+            terminal_toolbar: Some(vec![action.clone()]),
+            ..NativePluginContributes::default()
+        })
+        .is_ok()
+    );
+
+    let unknown_default = NativePluginTerminalToolbarActionDef {
+        default_state: "missing".to_string(),
+        ..action.clone()
+    };
+    let error = validate_native_plugin_contributions(&NativePluginContributes {
+        terminal_toolbar: Some(vec![unknown_default]),
+        ..NativePluginContributes::default()
+    })
+    .unwrap_err();
+    assert!(error.contains("is not a declared state"), "{error}");
+
+    let error = validate_native_plugin_contributions(&NativePluginContributes {
+        terminal_toolbar: Some(vec![action.clone(), action]),
+        ..NativePluginContributes::default()
+    })
+    .unwrap_err();
+    assert!(
+        error.contains("Duplicate contributes.terminalToolbar id"),
+        "{error}"
+    );
+}
+
+#[test]
 fn legacy_js_plugin_cannot_be_enabled_by_native_toggle() {
     let temp_dir = unique_temp_dir("plugin-legacy-enable");
     let settings_path = temp_dir.join("settings.json");
@@ -3172,6 +3228,22 @@ fn sample_contributes() -> NativePluginContributes {
             output: NativePluginHostMonitorOutputDef::default(),
             timeout_seconds: 10,
             max_output_bytes: 256 * 1024,
+        }]),
+        terminal_toolbar: Some(vec![NativePluginTerminalToolbarActionDef {
+            id: "demo-mode".to_string(),
+            label_key: "terminal.demo.button".to_string(),
+            states: vec![
+                NativePluginTerminalToolbarStateDef {
+                    id: "off".to_string(),
+                    label_key: "terminal.demo.off".to_string(),
+                },
+                NativePluginTerminalToolbarStateDef {
+                    id: "on".to_string(),
+                    label_key: "terminal.demo.on".to_string(),
+                },
+            ],
+            default_state: "off".to_string(),
+            disabled_hint_key: Some("terminal.demo.unavailable".to_string()),
         }]),
     }
 }

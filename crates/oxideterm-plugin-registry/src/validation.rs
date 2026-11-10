@@ -591,6 +591,58 @@ pub(crate) fn validate_native_plugin_contributions(
     if let Some(host_monitors) = &contributes.host_monitors {
         validate_native_plugin_host_monitors(host_monitors)?;
     }
+    if let Some(actions) = &contributes.terminal_toolbar {
+        let mut action_ids = HashSet::new();
+        for action in actions {
+            validate_manifest_text_field("contributes.terminalToolbar.id", &action.id)?;
+            validate_manifest_text_field(
+                "contributes.terminalToolbar.labelKey",
+                &action.label_key,
+            )?;
+            if !action_ids.insert(action.id.as_str()) {
+                return Err(format!(
+                    "Duplicate contributes.terminalToolbar id \"{}\"",
+                    action.id
+                ));
+            }
+            if action.states.is_empty() {
+                return Err(format!(
+                    "Toolbar action \"{}\" requires at least one state",
+                    action.id
+                ));
+            }
+            let mut state_ids = HashSet::new();
+            for state in &action.states {
+                validate_manifest_text_field("contributes.terminalToolbar.states.id", &state.id)?;
+                validate_manifest_text_field(
+                    "contributes.terminalToolbar.states.labelKey",
+                    &state.label_key,
+                )?;
+                if !state_ids.insert(state.id.as_str()) {
+                    return Err(format!(
+                        "Duplicate state \"{}\" in toolbar action \"{}\"",
+                        state.id, action.id
+                    ));
+                }
+            }
+            validate_manifest_text_field(
+                "contributes.terminalToolbar.defaultState",
+                &action.default_state,
+            )?;
+            if !state_ids.contains(action.default_state.as_str()) {
+                return Err(format!(
+                    "defaultState \"{}\" of toolbar action \"{}\" is not a declared state",
+                    action.default_state, action.id
+                ));
+            }
+            if let Some(hint_key) = &action.disabled_hint_key {
+                validate_manifest_text_field(
+                    "contributes.terminalToolbar.disabledHintKey",
+                    hint_key,
+                )?;
+            }
+        }
+    }
     Ok(())
 }
 

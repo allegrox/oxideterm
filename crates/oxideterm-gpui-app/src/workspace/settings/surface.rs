@@ -1528,7 +1528,7 @@ impl WorkspaceApp {
         }
         // Toolbar chips are pane render state outside the preference snapshot;
         // a locale switch changes their labels, so re-push them here.
-        self.sync_mc_helper_pane_state(cx);
+        self.sync_plugin_toolbar_state(cx);
         // Tauri's IDE reads Settings.ide live from settingsStore. Native IDE
         // surfaces keep their own GPUI owners, so push typography/wrap/autosave
         // changes into each open surface after the settings store changes.

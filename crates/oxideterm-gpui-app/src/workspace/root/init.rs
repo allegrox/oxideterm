@@ -720,7 +720,7 @@ impl WorkspaceApp {
             mc_helper_panel_countdown: Self::MC_HELPER_PANEL_REFRESH_SECS as u8,
             mc_helper_owner_pane_id: None,
             mc_helper_owner_window: None,
-            mc_helper_pane_modes: HashMap::new(),
+            plugin_toolbar_states: HashMap::new(),
             skill_registry,
             skill_workspace_root,
             loaded_conversation_skills: HashMap::new(),

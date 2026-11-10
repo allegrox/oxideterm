@@ -259,15 +259,10 @@ impl WorkspaceApp {
                 .insert(session_id, handle);
         }
         self.refresh_native_plugin_terminal_hooks(cx);
-        // A newly registered pane has no host mode entry yet, so seed it with
-        // Off plus the real plugin availability: the new pane opens stably at
-        // Off without touching the mode other panes display, and its session
-        // holds no notification routes until the plugin serves it explicitly.
-        let available = self.mc_helper_plugin_available(cx);
-        self.mc_helper_pane_modes
-            .entry(pane_id)
-            .or_insert_with(McHelperDisplayMode::default);
-        self.mc_helper_push_pane_spec(pane_id, &pane, available, cx);
+        // A newly registered pane has no stored toolbar state, so its chips
+        // render the contributed default states with live plugin availability
+        // without touching the states other panes display.
+        self.push_plugin_toolbar_specs_for_pane(pane_id, &pane, cx);
     }
 
     pub(super) fn handle_terminal_pane_delivery(
@@ -431,9 +426,15 @@ impl WorkspaceApp {
                 self.persist_telnet_line_endings(session_id, input, output, cx);
             }
             TerminalPaneEvent::ToolbarActionInvoked { id } => {
-                if id.as_ref() != MC_HELPER_TOOLBAR_ACTION_ID {
+                // Spec ids are "plugin_id:action_id"; an unknown pair means
+                // the plugin stopped declaring the chip, so drop the click.
+                let Some((plugin_id, action_id)) = id.split_once(':') else {
                     return;
-                }
+                };
+                let Some(definition) = self.plugin_toolbar_definition(plugin_id, action_id, cx)
+                else {
+                    return;
+                };
                 // The toolbar chip stops mouse propagation, so the container
                 // click handler that normally activates and focuses the pane
                 // never runs. Clicking the chip is a pane-level interaction:
@@ -457,16 +458,21 @@ impl WorkspaceApp {
                         .update(cx, |host, _| host.set_active_pane(Some(tab_id), pane_id));
                     self.needs_active_pane_focus = true;
                 }
-                if !self.mc_helper_plugin_available(cx) {
+                if !self.native_plugin_available(plugin_id, cx) {
                     return;
                 }
-                let next = self
-                    .mc_helper_pane_modes
-                    .get(&pane_id)
-                    .copied()
-                    .unwrap_or_default()
-                    .next();
-                self.set_mc_helper_display_mode(next, pane_id, Some(window_handle), cx);
+                let current = self
+                    .plugin_toolbar_state(plugin_id, action_id, pane_id)
+                    .cloned();
+                let next = next_plugin_toolbar_state(&definition, current.as_deref());
+                self.apply_plugin_toolbar_state(
+                    plugin_id,
+                    action_id,
+                    &next,
+                    pane_id,
+                    Some(window_handle),
+                    cx,
+                );
             }
             TerminalPaneEvent::PrivilegePromptStateChanged => {
                 if self.active_pane_id(cx) == Some(pane_id)

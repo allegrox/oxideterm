@@ -9,9 +9,10 @@ const MC_HELPER_TAB_ID: &str = "microcon-helper";
 /// surface knows nothing beyond this opaque string.
 pub(in crate::workspace) const MC_HELPER_TOOLBAR_ACTION_ID: &str = "mc-helper-mode";
 
-/// Tri-state chip mode of one pane's helper surface. Host-owned per-pane
-/// state (`mc_helper_pane_modes`); the pane's toolbar spec is only a render
-/// mirror pushed from here.
+/// Typed view over the microcon-helper toolbar action's manifest states
+/// ("off"/"inline"/"overlay"). The generic toolbar machinery stores opaque
+/// state ids in `plugin_toolbar_states`; this enum only gives the
+/// overlay-specific lifecycle code readable comparisons.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(in crate::workspace) enum McHelperDisplayMode {
     #[default]
@@ -21,79 +22,55 @@ pub(in crate::workspace) enum McHelperDisplayMode {
 }
 
 impl McHelperDisplayMode {
-    /// Chip cycle order; Overlay's successor is Off, which is also what a
-    /// preempted overlay pane falls back to.
-    pub(in crate::workspace) fn next(self) -> Self {
+    fn state_id(self) -> &'static str {
         match self {
-            Self::Off => Self::Inline,
-            Self::Inline => Self::Overlay,
-            Self::Overlay => Self::Off,
+            Self::Off => "off",
+            Self::Inline => "inline",
+            Self::Overlay => "overlay",
         }
     }
 
-    fn label_key(self) -> &'static str {
-        match self {
-            Self::Off => "terminal.mc_helper.mode_off",
-            Self::Inline => "terminal.mc_helper.mode_inline",
-            Self::Overlay => "terminal.mc_helper.mode_overlay",
+    fn from_state_id(state_id: &str) -> Option<Self> {
+        match state_id {
+            "off" => Some(Self::Off),
+            "inline" => Some(Self::Inline),
+            "overlay" => Some(Self::Overlay),
+            _ => None,
         }
     }
 }
 
 impl WorkspaceApp {
-    /// Installed, enabled, and activatable as a process runtime. Mirrors the
-    /// connection-plugin predicate; permission review blocks activation.
-    pub(in crate::workspace) fn mc_helper_plugin_available(&self, cx: &App) -> bool {
-        self.plugin_entity
-            .read(cx)
-            .registry()
-            .plugins()
-            .iter()
-            .any(|plugin| {
-                plugin.manifest.id == MC_HELPER_PLUGIN_ID
-                    && matches!(
-                        plugin.state,
-                        plugin_host::NativePluginState::ReadyProcess
-                            | plugin_host::NativePluginState::Loading
-                            | plugin_host::NativePluginState::Active
-                    )
-                    && matches!(
-                        plugin.runtime_plan,
-                        plugin_host::NativePluginRuntimePlan::Process { .. }
-                    )
-                    && !plugin_host::native_plugin_requires_permission_review(
-                        &plugin.manifest,
-                        &plugin.runtime_plan,
-                        &plugin.config,
-                    )
-            })
-    }
-
-    /// Mode switch entry point. Each pane owns its tri-state chip mode in the
-    /// host map; this surface tracks the overlay anchor and derives the plugin
-    /// lifecycle: the runtime runs while any pane is off Off and stops once
-    /// every pane returns to Off. Overlay is workspace unique: the claiming
-    /// pane demotes a previous overlay pane to Off (the chip cycle's successor
-    /// of Overlay) and takes over the anchor.
-    pub(in crate::workspace) fn set_mc_helper_display_mode(
+    /// Feature lifecycle for the microcon-helper toolbar action, run by
+    /// `apply_plugin_toolbar_state` after the pane's state id is stored. This
+    /// surface tracks the overlay anchor and derives the plugin lifecycle: the
+    /// runtime runs while any pane is not Off and stops once every pane
+    /// returns to Off. Overlay is workspace unique: the claiming pane demotes
+    /// a previous overlay pane to the default state (the chip cycle's
+    /// successor of Overlay) and takes over the anchor.
+    pub(in crate::workspace) fn apply_mc_helper_toolbar_lifecycle(
         &mut self,
-        mode: McHelperDisplayMode,
+        state_id: &str,
         pane_id: PaneId,
         window_handle: Option<gpui::AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        let available = self.mc_helper_plugin_available(cx);
-        if mode == McHelperDisplayMode::Overlay {
+        let mode = McHelperDisplayMode::from_state_id(state_id);
+        if mode == Some(McHelperDisplayMode::Overlay) {
             if let Some(previous) = self
                 .mc_helper_owner_pane_id
                 .filter(|owner| *owner != pane_id)
-                && let Some(previous_pane) = self.tab_host.read(cx).panes().get(&previous).cloned()
             {
                 // The chip cycle ends Overlay -> Off, so a preempted pane
                 // falls back to Off, not Inline.
-                self.mc_helper_pane_modes
-                    .insert(previous, McHelperDisplayMode::Off);
-                self.mc_helper_push_pane_spec(previous, &previous_pane, available, cx);
+                self.plugin_toolbar_states.insert(
+                    (
+                        MC_HELPER_PLUGIN_ID.to_string(),
+                        MC_HELPER_TOOLBAR_ACTION_ID.to_string(),
+                        previous,
+                    ),
+                    McHelperDisplayMode::Off.state_id().to_string(),
+                );
             }
             self.mc_helper_owner_pane_id = Some(pane_id);
             self.mc_helper_owner_window = window_handle;
@@ -105,12 +82,7 @@ impl WorkspaceApp {
             self.mc_helper_owner_pane_id = None;
             self.mc_helper_owner_window = None;
         }
-        // The host map is the mode authority; the pane spec is a render
-        // mirror. Then derive the runtime lifecycle from the per-pane modes.
-        self.mc_helper_pane_modes.insert(pane_id, mode);
-        if let Some(pane) = self.tab_host.read(cx).panes().get(&pane_id).cloned() {
-            self.mc_helper_push_pane_spec(pane_id, &pane, available, cx);
-        }
+        // Derive the runtime lifecycle from the per-pane states.
         let engaged = self.mc_helper_any_pane_engaged();
         let resolver = self.native_plugin_host_api_resolver(cx);
         self.plugin_entity.update(cx, |plugins, _cx| {
@@ -120,7 +92,7 @@ impl WorkspaceApp {
                 plugins.stop_runtime_plugin(MC_HELPER_PLUGIN_ID);
             }
         });
-        if mode == McHelperDisplayMode::Overlay {
+        if mode == Some(McHelperDisplayMode::Overlay) {
             // Bind the opening pane's session first (the toolbar chip belongs
             // to that pane, so it holds focus right now), then fetch telemetry
             // immediately. The panel's self-drawn countdown starts from the
@@ -137,15 +109,18 @@ impl WorkspaceApp {
             );
             self.ensure_mc_helper_panel_timer(cx);
         }
-        self.sync_mc_helper_pane_state(cx);
     }
 
     /// Whether any open pane still engages the helper (Inline or Overlay);
-    /// the host map is the single source of truth for per-pane modes.
+    /// the generic state map is the single source of truth for per-pane modes.
     fn mc_helper_any_pane_engaged(&self) -> bool {
-        self.mc_helper_pane_modes
-            .values()
-            .any(|mode| *mode != McHelperDisplayMode::Off)
+        self.plugin_toolbar_states
+            .iter()
+            .any(|((plugin_id, action_id, _), state)| {
+                plugin_id == MC_HELPER_PLUGIN_ID
+                    && action_id == MC_HELPER_TOOLBAR_ACTION_ID
+                    && state != McHelperDisplayMode::Off.state_id()
+            })
     }
 
     /// A terminal pane closed (manual close, reconnect replacing the session,
@@ -163,13 +138,13 @@ impl WorkspaceApp {
             self.mc_helper_owner_pane_id = None;
             self.mc_helper_owner_window = None;
         }
-        self.mc_helper_pane_modes.remove(pane_id);
+        self.plugin_toolbar_pane_closed(pane_id);
         if !self.mc_helper_any_pane_engaged() {
             self.plugin_entity.update(cx, |plugins, _cx| {
                 plugins.stop_runtime_plugin(MC_HELPER_PLUGIN_ID)
             });
         }
-        self.sync_mc_helper_pane_state(cx);
+        self.sync_plugin_toolbar_state(cx);
     }
 
     pub(in crate::workspace) const MC_HELPER_PANEL_REFRESH_SECS: u64 = 10;
@@ -226,64 +201,6 @@ impl WorkspaceApp {
             }
         })
         .detach();
-    }
-
-    /// Pushes every pane's helper chip spec (mode mirror + plugin
-    /// availability) from host state. Also re-runs after plugin runtime state
-    /// changes and locale switches so the chip follows
-    /// install/disable/activation failures and label changes without
-    /// persistence.
-    pub(in crate::workspace) fn sync_mc_helper_pane_state(&mut self, cx: &mut Context<Self>) {
-        let available = self.mc_helper_plugin_available(cx);
-        let panes = self
-            .tab_host
-            .read(cx)
-            .panes()
-            .iter()
-            .map(|(pane_id, pane)| (*pane_id, pane.clone()))
-            .collect::<Vec<_>>();
-        for (pane_id, pane) in panes {
-            self.mc_helper_push_pane_spec(pane_id, &pane, available, cx);
-        }
-        cx.notify();
-    }
-
-    /// Builds the helper chip spec for one pane from host state and pushes it;
-    /// the chip label follows the current locale. The pane's spec equality
-    /// guard keeps redundant pushes from triggering re-renders.
-    pub(in crate::workspace) fn mc_helper_push_pane_spec(
-        &mut self,
-        pane_id: PaneId,
-        pane: &gpui::Entity<TerminalPane>,
-        available: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let mode = self
-            .mc_helper_pane_modes
-            .get(&pane_id)
-            .copied()
-            .unwrap_or_default();
-        let label = format!(
-            "{} {}",
-            self.i18n.t("terminal.mc_helper.button"),
-            self.i18n.t(mode.label_key())
-        );
-        let spec = TerminalToolbarActionSpec {
-            id: MC_HELPER_TOOLBAR_ACTION_ID.into(),
-            label,
-            enabled: available,
-            active: mode != McHelperDisplayMode::Off,
-            disabled_hint: if available {
-                None
-            } else {
-                Some(
-                    self.i18n
-                        .t("terminal.mc_helper.unavailable_hint")
-                        .to_string(),
-                )
-            },
-        };
-        pane.update(cx, |pane, cx| pane.set_toolbar_actions(vec![spec], cx));
     }
 
     /// The pane currently in Overlay mode; the unique card anchors there and
@@ -409,8 +326,10 @@ impl WorkspaceApp {
                                         }
                                         _ => return,
                                     };
-                                    this.set_mc_helper_display_mode(
-                                        McHelperDisplayMode::Off,
+                                    this.apply_plugin_toolbar_state(
+                                        MC_HELPER_PLUGIN_ID,
+                                        MC_HELPER_TOOLBAR_ACTION_ID,
+                                        McHelperDisplayMode::Off.state_id(),
                                         pane_id,
                                         window_handle,
                                         cx,

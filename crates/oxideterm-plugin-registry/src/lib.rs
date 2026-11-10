@@ -41,7 +41,9 @@ pub use oxideterm_plugin_manifest::{
     NativePluginSettingDef, NativePluginSettingOption, NativePluginShortcutContribution,
     NativePluginShortcutDef, NativePluginSidebarContribution, NativePluginSidebarDef,
     NativePluginState, NativePluginTabContribution, NativePluginTabDef,
-    NativePluginTerminalHooksDef, NativePluginTransportContribution, NativePluginUrlInstallResult,
+    NativePluginTerminalHooksDef, NativePluginTerminalToolbarActionContribution,
+    NativePluginTerminalToolbarActionDef, NativePluginTerminalToolbarStateDef,
+    NativePluginTransportContribution, NativePluginUrlInstallResult,
     NativePluginWasmActivationPlan,
 };
 use oxideterm_plugin_protocol::{

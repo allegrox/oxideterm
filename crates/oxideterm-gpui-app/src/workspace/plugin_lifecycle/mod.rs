@@ -1408,8 +1408,9 @@ impl WorkspaceApp {
                 }
                 plugin_entity::PluginRuntimeIntent::StateChanged => {
                     // Activation/deactivation results land here; keep the
-                    // MC helper toolbar availability in sync with runtime state.
-                    self.sync_mc_helper_pane_state(cx);
+                    // contributed toolbar chips' availability in sync with
+                    // runtime state.
+                    self.sync_plugin_toolbar_state(cx);
                 }
             }
         }

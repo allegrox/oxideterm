@@ -126,6 +126,8 @@ pub struct NativePluginContributes {
     pub api_commands: Option<Vec<String>>,
     #[serde(default)]
     pub host_monitors: Option<Vec<NativePluginHostMonitorDef>>,
+    #[serde(default)]
+    pub terminal_toolbar: Option<Vec<NativePluginTerminalToolbarActionDef>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -251,6 +253,29 @@ pub struct NativePluginTabDef {
     pub id: String,
     pub title: String,
     pub icon: String,
+}
+
+/// A multi-state toolbar chip a plugin adds to every terminal pane. Labels
+/// are host i18n keys so the chip follows the app locale without a plugin
+/// restart. The host treats state ids as opaque: it only cycles through
+/// `states` in declaration order and never interprets them.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePluginTerminalToolbarActionDef {
+    pub id: String,
+    pub label_key: String,
+    pub states: Vec<NativePluginTerminalToolbarStateDef>,
+    pub default_state: String,
+    /// Tooltip i18n key shown while the owning plugin is unavailable.
+    #[serde(default)]
+    pub disabled_hint_key: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePluginTerminalToolbarStateDef {
+    pub id: String,
+    pub label_key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

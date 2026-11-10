@@ -39,6 +39,7 @@ mod plugin_entity;
 mod plugin_lifecycle;
 mod plugin_manager;
 mod plugin_preview;
+mod plugin_toolbar;
 mod plugin_ui;
 mod public_mcp;
 mod quick_commands;
@@ -103,11 +104,11 @@ use self::{
     ai_lazy::LazyAiRagStore,
     breadcrumb_scroll::scroll_breadcrumb_by_wheel,
     knowledge::KnowledgeWorkspaceLayout,
-    mc_helper::{MC_HELPER_TOOLBAR_ACTION_ID, McHelperDisplayMode},
     path_completion::{
         PathCompletionCandidate, PathCompletionOwner, PathCompletionState,
         local_path_completion_request, remote_path_completion_request,
     },
+    plugin_toolbar::next_plugin_toolbar_state,
     sidebar::{ContextSidebarPanel, ContextSidebarTool},
     version_migration::VersionMigrationState,
 };
@@ -908,9 +909,11 @@ pub(crate) struct WorkspaceApp {
     // anchors there and shows only while that pane holds focus.
     mc_helper_owner_pane_id: Option<PaneId>,
     mc_helper_owner_window: Option<gpui::AnyWindowHandle>,
-    // Authoritative per-pane chip mode; the pane's toolbar spec is only a
+    // Authoritative per-pane toolbar state for plugin-contributed chips:
+    // (plugin id, action id, pane id) -> state id. A missing entry means the
+    // action's declared default state; the pane's toolbar specs are only a
     // render mirror pushed from here. Entries exist for open panes only.
-    mc_helper_pane_modes: HashMap<PaneId, McHelperDisplayMode>,
+    plugin_toolbar_states: HashMap<(String, String, PaneId), String>,
     skill_registry: std::sync::Arc<parking_lot::RwLock<oxideterm_skills::SkillRegistry>>,
     skill_workspace_root: Option<std::path::PathBuf>,
     loaded_conversation_skills: HashMap<String, HashMap<String, String>>,
