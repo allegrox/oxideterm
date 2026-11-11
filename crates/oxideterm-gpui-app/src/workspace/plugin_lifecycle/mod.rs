@@ -156,10 +156,10 @@ impl WorkspaceApp {
                 let ok = self.write_native_plugin_node_terminal_text(&node_id, &text, cx);
                 plugin_runtime::PluginResponse::ok(request.request_id, json!(ok))
             }
-            NativePluginTerminalAction::WriteLocal { node_id, text } => {
-                let ok = match node_id.as_deref() {
-                    Some(node_id) => {
-                        self.write_native_plugin_node_terminal_local_display(node_id, &text, cx)
+            NativePluginTerminalAction::WriteLocal { terminal_id, text } => {
+                let ok = match terminal_id.as_deref() {
+                    Some(terminal_id) => {
+                        self.write_native_plugin_terminal_local_display(terminal_id, &text, cx)
                     }
                     None => self.write_native_plugin_active_terminal_local_display(&text, cx),
                 };
@@ -559,17 +559,15 @@ impl WorkspaceApp {
         })
     }
 
-    fn write_native_plugin_node_terminal_local_display(
+    // Session-addressed display write: BLE and serial sessions have no SSH
+    // node, so the pane is resolved from the terminal session id directly.
+    fn write_native_plugin_terminal_local_display(
         &mut self,
-        node_id: &str,
+        terminal_id: &str,
         text: &str,
         cx: &mut Context<Self>,
     ) -> bool {
-        let node_id = oxideterm_ssh::NodeId::new(node_id);
-        let Some(node) = self.ssh_nodes.get(&node_id) else {
-            return false;
-        };
-        let Some(session_id) = node.terminal_ids.first().copied() else {
+        let Some(session_id) = terminal_id.parse::<u64>().ok().map(TerminalSessionId) else {
             return false;
         };
         let Some(pane) = native_plugin_pane_for_session(self, session_id, cx) else {

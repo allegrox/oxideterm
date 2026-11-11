@@ -119,7 +119,7 @@ pub(in crate::workspace) enum NativePluginTerminalAction {
         text: String,
     },
     WriteLocal {
-        node_id: Option<String>,
+        terminal_id: Option<String>,
         text: String,
     },
     ClearBuffer {

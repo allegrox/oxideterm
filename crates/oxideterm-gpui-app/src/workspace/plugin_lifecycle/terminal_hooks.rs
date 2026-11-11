@@ -142,13 +142,17 @@ pub(super) fn native_plugin_terminal_action_from_call(
                 .get("text")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "terminal.writeLocal requires args.text".to_string())?;
-            let node_id = call
+            // Optional args.terminalId selects the owning terminal session (the
+            // same id the input interceptor reports and ble.* calls consume);
+            // BLE and serial sessions have no SSH node, so a node id could not
+            // address them. Without it the write lands on the active terminal.
+            let terminal_id = call
                 .args
-                .get("nodeId")
+                .get("terminalId")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             Ok(NativePluginTerminalAction::WriteLocal {
-                node_id,
+                terminal_id,
                 text: text.to_string(),
             })
         }
