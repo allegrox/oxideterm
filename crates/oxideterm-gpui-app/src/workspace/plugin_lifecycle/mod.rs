@@ -2023,6 +2023,7 @@ impl WorkspaceApp {
             || (namespace == "i18n" && matches!(method, "getLanguage" | "t"))
             || (namespace == "storage" && method == "get")
             || (namespace == "settings" && matches!(method, "get" | "exportSyncableSettings"))
+            || (namespace == "toolbar" && method == "reportActionState")
         {
             // The synchronous resolver already completed these calls. Their
             // retained outbound effects are audit records, not a second action.
