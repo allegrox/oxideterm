@@ -659,7 +659,7 @@
       "runtime_init_failed": "Initialisierung der BLE-Laufzeit fehlgeschlagen",
       "adapter_index_out_of_range": "Bluetooth-Adapter-Index {n} liegt außerhalb des gültigen Bereichs",
       "service_not_found": "Dienst {uuid} nicht gefunden",
-      "no_notify_write_pair": "Der ausgewählte Dienst hat kein Notify+Write-Merkmalspaar"
+      "no_notify_write_pair": "Der ausgewählte Dienst hat kein Paar aus Notify- und Write-Merkmal"
     }
   },
   "search": {

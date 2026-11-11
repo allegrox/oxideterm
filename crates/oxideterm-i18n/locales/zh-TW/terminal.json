@@ -259,7 +259,7 @@
       "partial_cleanup_title": "傳輸清理不完整",
       "partial_cleanup_description": "暫時的傳輸狀態未能完全清除。你仍可繼續使用終端，但可能會殘留舊的傳輸檔案。",
       "version_mismatch_title": "trzsz 協定不相容",
-      "version_mismatch_description": "遠端 trzsz 執行環境與此 OxideTerm 版本不相容。",
+      "version_mismatch_description": "遠端 trzsz 執行階段與此 OxideTerm 版本不相容。",
       "path_invalid_title": "下載路徑遭拒",
       "path_invalid_description": "由於所選路徑無效或位於核准的下載根目錄之外，OxideTerm 已封鎖這次 trzsz 傳輸。",
       "symlink_not_supported_title": "不支援符號連結傳輸",
@@ -656,7 +656,7 @@
     },
     "ble": {
       "connection_failed": "BLE 連線失敗：{error}",
-      "runtime_init_failed": "BLE 執行環境初始化失敗",
+      "runtime_init_failed": "BLE 執行階段初始化失敗",
       "adapter_index_out_of_range": "藍牙介面卡索引 {n} 越界",
       "service_not_found": "未找到服務 {uuid}",
       "no_notify_write_pair": "所選服務缺少 notify+write 特徵對"

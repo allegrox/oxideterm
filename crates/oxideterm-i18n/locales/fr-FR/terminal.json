@@ -657,7 +657,7 @@
     "ble": {
       "connection_failed": "Échec de la connexion BLE : {error}",
       "runtime_init_failed": "Échec de l'initialisation du runtime BLE",
-      "adapter_index_out_of_range": "L'index de l'adaptateur Bluetooth {n} est hors limites",
+      "adapter_index_out_of_range": "L'index de l'adaptateur Bluetooth {n} est hors plage",
       "service_not_found": "Service {uuid} introuvable",
       "no_notify_write_pair": "Le service sélectionné n'a pas de paire de caractéristiques notify+write"
     }
