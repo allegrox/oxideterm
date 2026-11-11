@@ -255,6 +255,29 @@ impl WorkspaceApp {
         });
     }
 
+    /// Poll-side mirror of the render gate. The card only paints in the
+    /// anchor window, and `anchor.window` is written only at claim time: after
+    /// the pane moves to another window the gate fails there while the pane
+    /// can still be the active one, so the poll must also require the anchor
+    /// to point at the window that renders it. Otherwise the plugin keeps
+    /// polling the device for a card the user cannot see.
+    fn plugin_overlay_poll_visible(&self, cx: &App) -> bool {
+        let Some(anchor) = self.plugin_overlay_anchor.as_ref() else {
+            return false;
+        };
+        if self.active_pane_id(cx) != Some(anchor.pane_id) {
+            return false;
+        }
+        let Some(anchor_window) = anchor.window else {
+            return false;
+        };
+        let Some(main) = self.window_registry.handle_for_role(window_registry::WindowRole::Main)
+        else {
+            return false;
+        };
+        anchor_window.window_id() == main.window_id()
+    }
+
     /// Single-flight 1s poll that reports focus changes of the anchored pane
     /// to the plugin as `toolbar.overlayVisibilityChanged`. The loop owns no
     /// business semantics and self-terminates once the anchor is gone or its
@@ -282,7 +305,9 @@ impl WorkspaceApp {
                         // replacement anchor from two loops.
                         return false;
                     }
-                    let visible = workspace.active_pane_id(cx) == Some(anchor.pane_id);
+                    // Mirror the render gate (window match included) so a pane
+                    // whose anchor window moved away reports invisible.
+                    let visible = workspace.plugin_overlay_poll_visible(cx);
                     if visible != anchor.visible {
                         let plugin_id = anchor.plugin_id.clone();
                         let payload = serde_json::json!({
