@@ -692,23 +692,23 @@ mod tests {
         std::fs::create_dir(&locales).unwrap();
         std::fs::write(
             locales.join("zh-CN.json"),
-            r#"{"toolbarButton":"MC 助手","toolbarModeOff":"关闭"}"#,
+            r#"{"toolbarButton":"演示模式","toolbarModeOff":"关闭"}"#,
         )
         .unwrap();
         std::fs::write(
             locales.join("en.json"),
-            r#"{"toolbarButton":"MC Helper","toolbarModeOff":"Off"}"#,
+            r#"{"toolbarButton":"Demo Mode","toolbarModeOff":"Off"}"#,
         )
         .unwrap();
 
         let zh = load_plugin_locale_bundle(dir.path(), "locales", "zh-CN");
-        assert_eq!(zh.get("toolbarButton").map(String::as_str), Some("MC 助手"));
+        assert_eq!(zh.get("toolbarButton").map(String::as_str), Some("演示模式"));
         assert_eq!(zh.get("toolbarModeOff").map(String::as_str), Some("关闭"));
 
         let missing_tag = load_plugin_locale_bundle(dir.path(), "locales", "fr-FR");
         assert_eq!(
             missing_tag.get("toolbarButton").map(String::as_str),
-            Some("MC Helper")
+            Some("Demo Mode")
         );
 
         assert!(load_plugin_locale_bundle(dir.path(), "absent", "zh-CN").is_empty());
