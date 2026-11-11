@@ -258,9 +258,10 @@ pub struct NativePluginTabDef {
 /// A multi-state toolbar chip a plugin adds to every terminal pane. Label
 /// keys resolve in the plugin's own locale bundle (`manifest.locales`), which
 /// the host reads from the package directory so the chip follows the app
-/// locale even while the plugin runtime is stopped. The host treats state ids
-/// as opaque: it only cycles through `states` in declaration order and never
-/// interprets them.
+/// locale even while the plugin runtime is stopped. The host assigns no
+/// meaning to the state id strings: it cycles through `states` in declaration
+/// order and demotes to `default_state`. It does interpret the per-state
+/// `overlay` flag, described below.
 ///
 /// When a state is marked `overlay`, the host provides the anchor primitive:
 /// it pins the workspace-unique overlay card to the pane that entered the
