@@ -18,6 +18,14 @@ use crate::workspace::{
 // Terminal hooks fail open when a plugin exceeds the foreground latency budget.
 const NATIVE_PLUGIN_TERMINAL_HOOK_TIMEOUT: Duration = Duration::from_millis(5);
 
+// Upper bound on a terminal host call. Every `NativePluginTerminalAction`
+// answers within one UI turn, so the only way the response wait blocks past
+// this is a request whose owning window is gone and never drains the queue.
+// An unbounded `recv` would pin this host-call worker forever (the BLE bridge
+// applies the same `recv_timeout` lesson); the value is far above any real UI
+// latency so it only trips on that leak.
+const NATIVE_PLUGIN_TERMINAL_CALL_TIMEOUT: Duration = Duration::from_secs(10);
+
 // Terminal hook execution has a strict timeout and fail-open behavior; keeping
 // it isolated makes that contract easier to audit than burying it in lifecycle.
 pub(super) fn native_plugin_terminal_response(
@@ -53,15 +61,17 @@ pub(super) fn native_plugin_terminal_response(
             ),
         );
     }
-    response_rx.recv().unwrap_or_else(|_| {
-        plugin_runtime::PluginResponse::error(
-            request_id,
-            plugin_runtime::PluginError::runtime(
-                "terminal_response_unavailable",
-                "Native plugin terminal host closed before answering",
-            ),
-        )
-    })
+    response_rx
+        .recv_timeout(NATIVE_PLUGIN_TERMINAL_CALL_TIMEOUT)
+        .unwrap_or_else(|_| {
+            plugin_runtime::PluginResponse::error(
+                request_id,
+                plugin_runtime::PluginError::runtime(
+                    "terminal_response_unavailable",
+                    "Native plugin terminal host closed before answering",
+                ),
+            )
+        })
 }
 
 pub(super) fn native_plugin_terminal_action_from_call(
