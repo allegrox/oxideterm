@@ -476,7 +476,7 @@ impl WorkspaceApp {
                     .unwrap_or_else(|| definition.default_state.clone());
                 self.dispatch_native_plugin_event(
                     plugin_id.to_string(),
-                    "toolbar.actionClicked",
+                    plugin_host::NATIVE_PLUGIN_TOOLBAR_ACTION_CLICKED_EVENT,
                     serde_json::json!({
                         "actionId": action_id,
                         "paneId": pane_id.0,

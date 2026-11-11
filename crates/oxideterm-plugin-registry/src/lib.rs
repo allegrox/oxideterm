@@ -77,7 +77,9 @@ pub use constants::{
     NATIVE_PLUGIN_PROFILER_METRICS_EVENT, NATIVE_PLUGIN_SESSION_NODE_STATE_CHANGED_EVENT,
     NATIVE_PLUGIN_SESSION_TREE_CHANGED_EVENT, NATIVE_PLUGIN_SETTING_CHANGED_EVENT,
     NATIVE_PLUGIN_TRANSFER_COMPLETE_EVENT, NATIVE_PLUGIN_TRANSFER_ERROR_EVENT,
-    NATIVE_PLUGIN_TRANSFER_PROGRESS_EVENT, NATIVE_PLUGIN_UI_EVENT,
+    NATIVE_PLUGIN_TRANSFER_PROGRESS_EVENT, NATIVE_PLUGIN_TOOLBAR_ACTION_CLICKED_EVENT,
+    NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT, NATIVE_PLUGIN_TOOLBAR_OVERLAY_OPENED_EVENT,
+    NATIVE_PLUGIN_TOOLBAR_OVERLAY_VISIBILITY_CHANGED_EVENT, NATIVE_PLUGIN_UI_EVENT,
     NATIVE_PLUGIN_UI_LAYOUT_CHANGED_EVENT,
 };
 pub use contributions::{
@@ -96,7 +98,8 @@ pub use registry::{
 };
 pub use state_semantics::{
     PLUGIN_ID_CONFLICT_ERROR_PREFIX, native_plugin_conflict_id, native_plugin_error_has_code,
-    native_plugin_state_is_active_like, native_plugin_state_is_error_like,
+    native_plugin_process_activatable, native_plugin_state_is_active_like,
+    native_plugin_state_is_error_like,
 };
 pub use validation::{
     native_plugin_custom_event_key, native_plugin_declarative_control_is_actionable,

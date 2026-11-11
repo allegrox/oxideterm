@@ -83,6 +83,14 @@ pub const NATIVE_PLUGIN_LIFECYCLE_CONNECT_EVENT: &str = "lifecycle.onConnect";
 pub const NATIVE_PLUGIN_LIFECYCLE_DISCONNECT_EVENT: &str = "lifecycle.onDisconnect";
 pub const NATIVE_PLUGIN_LIFECYCLE_LINK_DOWN_EVENT: &str = "lifecycle.onLinkDown";
 pub const NATIVE_PLUGIN_LIFECYCLE_RECONNECT_EVENT: &str = "lifecycle.onReconnect";
+// Toolbar events are dispatched to the plugin that owns the anchor or the
+// clicked chip, never broadcast to subscribers, so they are deliberately
+// absent from PHASE4.
+pub const NATIVE_PLUGIN_TOOLBAR_ACTION_CLICKED_EVENT: &str = "toolbar.actionClicked";
+pub const NATIVE_PLUGIN_TOOLBAR_OVERLAY_OPENED_EVENT: &str = "toolbar.overlayOpened";
+pub const NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT: &str = "toolbar.overlayClosed";
+pub const NATIVE_PLUGIN_TOOLBAR_OVERLAY_VISIBILITY_CHANGED_EVENT: &str =
+    "toolbar.overlayVisibilityChanged";
 pub(crate) const NATIVE_PLUGIN_PHASE4_SUBSCRIPTION_EVENTS: &[&str] = &[
     NATIVE_PLUGIN_APP_THEME_CHANGED_EVENT,
     NATIVE_PLUGIN_APP_SETTINGS_CHANGED_EVENT,

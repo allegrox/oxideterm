@@ -1,4 +1,7 @@
-use crate::NativePluginState;
+use crate::{
+    NativePluginInfo, NativePluginRuntimePlan, NativePluginState,
+    native_plugin_requires_permission_review,
+};
 
 pub const PLUGIN_ID_CONFLICT_ERROR_PREFIX: &str = "PLUGIN_ID_CONFLICT:";
 
@@ -24,6 +27,26 @@ pub fn native_plugin_state_is_error_like(state: NativePluginState) -> bool {
     matches!(
         state,
         NativePluginState::Error | NativePluginState::AutoDisabled
+    )
+}
+
+/// The plugin can serve host features as a process runtime: loaded enough to
+/// activate (ReadyProcess, or Loading/Active while its process is coming up),
+/// planned as a process, and cleared of the permission-review gate. Toolbar
+/// chips and connection entries share this availability predicate.
+pub fn native_plugin_process_activatable(plugin: &NativePluginInfo) -> bool {
+    matches!(
+        plugin.state,
+        NativePluginState::ReadyProcess
+            | NativePluginState::Loading
+            | NativePluginState::Active
+    ) && matches!(
+        plugin.runtime_plan,
+        NativePluginRuntimePlan::Process { .. }
+    ) && !native_plugin_requires_permission_review(
+        &plugin.manifest,
+        &plugin.runtime_plan,
+        &plugin.config,
     )
 }
 

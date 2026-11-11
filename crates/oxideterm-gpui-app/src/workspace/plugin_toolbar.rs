@@ -42,21 +42,7 @@ impl WorkspaceApp {
             .iter()
             .any(|plugin| {
                 plugin.manifest.id == plugin_id
-                    && matches!(
-                        plugin.state,
-                        plugin_host::NativePluginState::ReadyProcess
-                            | plugin_host::NativePluginState::Loading
-                            | plugin_host::NativePluginState::Active
-                    )
-                    && matches!(
-                        plugin.runtime_plan,
-                        plugin_host::NativePluginRuntimePlan::Process { .. }
-                    )
-                    && !plugin_host::native_plugin_requires_permission_review(
-                        &plugin.manifest,
-                        &plugin.runtime_plan,
-                        &plugin.config,
-                    )
+                    && plugin_host::native_plugin_process_activatable(plugin)
             })
     }
 
@@ -196,7 +182,7 @@ impl WorkspaceApp {
                 // polling for a pane that no longer owns the anchor.
                 self.dispatch_native_plugin_event(
                     previous.plugin_id.clone(),
-                    "toolbar.overlayClosed",
+                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
                     serde_json::json!({
                         "actionId": previous.action_id,
                         "paneId": previous.pane_id.0,
@@ -210,7 +196,7 @@ impl WorkspaceApp {
             if claimed {
                 self.dispatch_native_plugin_event(
                     plugin_id.to_string(),
-                    "toolbar.overlayOpened",
+                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_OPENED_EVENT,
                     serde_json::json!({ "actionId": action_id, "paneId": pane_id.0 }),
                     cx,
                 );
@@ -220,7 +206,7 @@ impl WorkspaceApp {
             if let Some(anchor) = self.plugin_overlay_anchor.take() {
                 self.dispatch_native_plugin_event(
                     anchor.plugin_id,
-                    "toolbar.overlayClosed",
+                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
                     serde_json::json!({ "actionId": anchor.action_id, "paneId": pane_id.0 }),
                     cx,
                 );
@@ -320,7 +306,7 @@ impl WorkspaceApp {
                         }
                         workspace.dispatch_native_plugin_event(
                             plugin_id,
-                            "toolbar.overlayVisibilityChanged",
+                            plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_VISIBILITY_CHANGED_EVENT,
                             payload,
                             cx,
                         );
@@ -516,7 +502,7 @@ impl WorkspaceApp {
             if let Some(anchor) = self.plugin_overlay_anchor.take() {
                 self.dispatch_native_plugin_event(
                     anchor.plugin_id,
-                    "toolbar.overlayClosed",
+                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
                     serde_json::json!({ "actionId": anchor.action_id, "paneId": pane_id.0 }),
                     cx,
                 );
