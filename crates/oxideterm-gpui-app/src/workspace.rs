@@ -899,6 +899,9 @@ pub(crate) struct WorkspaceApp {
     // anchor, the render gate, and the card chrome, while the plugin owns the
     // card content and refresh semantics.
     plugin_overlay_anchor: Option<plugin_toolbar::PluginOverlayAnchor>,
+    // Monotonic counter feeding each claimed anchor's generation so retired
+    // poll loops can detect that a newer claim replaced theirs.
+    plugin_overlay_generation: u64,
     // Authoritative per-pane toolbar state for plugin-contributed chips:
     // (plugin id, action id, pane id) -> state id. A missing entry means the
     // action's declared default state; the pane's toolbar specs are only a

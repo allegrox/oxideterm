@@ -13,9 +13,15 @@ pub(in crate::workspace) struct PluginOverlayAnchor {
     /// Last visibility value delivered to the plugin; the poll only emits
     /// changes so the plugin never receives duplicate notifications.
     pub visible: bool,
-    /// Whether the visibility poll loop is running for this anchor. Carried
-    /// over when a new anchor preempts an old one so a single loop serves it.
+    /// Whether a visibility poll loop is serving this anchor's generation.
+    /// The single-flight guard in the spawn helper checks it so one anchor
+    /// never gets two concurrent loops.
     pub timer_active: bool,
+    /// Monotonic counter incremented on each reclaim. The visibility poll loop
+    /// captures this at spawn time and exits when it no longer matches, so a
+    /// release followed by a reclaim within 1s cannot leave two concurrent
+    /// loops polling the same anchor.
+    pub generation: u64,
 }
 
 /// Generic machinery for plugin-contributed terminal toolbar chips. The
@@ -136,10 +142,12 @@ impl WorkspaceApp {
         cx: &mut Context<Self>,
     ) {
         let anchored_here = self.plugin_overlay_anchor.as_ref().is_some_and(|anchor| {
-            (anchor.plugin_id.as_str(), anchor.pane_id) == (plugin_id, pane_id)
+            (anchor.plugin_id.as_str(), anchor.action_id.as_str(), anchor.pane_id)
+                == (plugin_id, action_id, pane_id)
         });
         if overlay {
-            // Any anchor that is not this pane's is displaced by the claim.
+            // Any anchor that is not this exact action's pane is displaced by
+            // the claim, including a different overlay action on the same pane.
             let preempted = if anchored_here {
                 None
             } else {
@@ -165,21 +173,36 @@ impl WorkspaceApp {
             }
             let claimed = self.plugin_overlay_anchor.is_none();
             if claimed {
-                let timer_active = preempted
-                    .as_ref()
-                    .map(|anchor| anchor.timer_active)
-                    .unwrap_or(false);
+                // A fresh generation retires the previous anchor's poll loop:
+                // it observes the mismatch and exits, so a release followed by
+                // a quick reclaim cannot accumulate concurrent loops. The new
+                // loop is spawned below through the single-flight guard.
+                self.plugin_overlay_generation += 1;
                 self.plugin_overlay_anchor = Some(PluginOverlayAnchor {
                     plugin_id: plugin_id.to_string(),
                     action_id: action_id.to_string(),
                     pane_id,
                     window: window_handle,
                     visible: false,
-                    timer_active,
+                    timer_active: false,
+                    generation: self.plugin_overlay_generation,
                 });
             }
             self.sync_plugin_toolbar_runtime(plugin_id, cx);
             if let Some(previous) = &preempted {
+                // The preempted plugin must learn its overlay closed before
+                // its runtime may stop, mirroring the release path ordering;
+                // otherwise a runtime still engaged by another pane keeps
+                // polling for a pane that no longer owns the anchor.
+                self.dispatch_native_plugin_event(
+                    previous.plugin_id.clone(),
+                    "toolbar.overlayClosed",
+                    serde_json::json!({
+                        "actionId": previous.action_id,
+                        "paneId": previous.pane_id.0,
+                    }),
+                    cx,
+                );
                 if previous.plugin_id != plugin_id {
                     self.sync_plugin_toolbar_runtime(&previous.plugin_id, cx);
                 }
@@ -234,8 +257,9 @@ impl WorkspaceApp {
 
     /// Single-flight 1s poll that reports focus changes of the anchored pane
     /// to the plugin as `toolbar.overlayVisibilityChanged`. The loop owns no
-    /// business semantics and self-terminates once the anchor is gone; while
-    /// the anchor merely moves to another pane the same loop keeps serving.
+    /// business semantics and self-terminates once the anchor is gone or its
+    /// generation was superseded by a newer claim, so at most one loop is
+    /// live per anchor generation.
     fn ensure_plugin_overlay_visibility_timer(&mut self, cx: &mut Context<Self>) {
         let Some(anchor) = self.plugin_overlay_anchor.as_mut() else {
             return;
@@ -244,6 +268,7 @@ impl WorkspaceApp {
             return;
         }
         anchor.timer_active = true;
+        let generation = anchor.generation;
         cx.spawn(async move |this, cx| {
             loop {
                 gpui::Timer::after(std::time::Duration::from_secs(1)).await;
@@ -251,6 +276,12 @@ impl WorkspaceApp {
                     let Some(anchor) = workspace.plugin_overlay_anchor.as_ref() else {
                         return false;
                     };
+                    if anchor.generation != generation {
+                        // A newer claim owns the anchor now; its own loop
+                        // serves it, so retire this one instead of polling the
+                        // replacement anchor from two loops.
+                        return false;
+                    }
                     let visible = workspace.active_pane_id(cx) == Some(anchor.pane_id);
                     if visible != anchor.visible {
                         let plugin_id = anchor.plugin_id.clone();
