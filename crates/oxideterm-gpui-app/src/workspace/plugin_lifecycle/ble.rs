@@ -224,13 +224,19 @@ async fn run_ble_notification_pump(
     // Remove the entry only while it still holds this pump's token: a
     // replacement route may already have registered a new token under the
     // same key between cancellation and this cleanup.
-    let mut table = routes.lock().unwrap_or_else(|error| error.into_inner());
-    if table
-        .get(&key)
-        .is_some_and(|token| Arc::ptr_eq(token, &cancel_token))
     {
-        table.remove(&key);
+        let mut table = routes.lock().unwrap_or_else(|error| error.into_inner());
+        if table
+            .get(&key)
+            .is_some_and(|token| Arc::ptr_eq(token, &cancel_token))
+        {
+            table.remove(&key);
+        }
     }
+    // Drop the route-table guard before awaiting. The unsubscribe is scoped to
+    // this route's id, so it cannot collide with a replacement route's
+    // subscribe, and holding the lock across the await would let a stalled
+    // session worker block every later register/cancel.
     // The session worker may already be gone; either outcome ends this
     // route's CCCD responsibility.
     let _ = handle.notify_unsubscribe(characteristic, route_id).await;
