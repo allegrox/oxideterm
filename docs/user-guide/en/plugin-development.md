@@ -1970,16 +1970,16 @@ Host Tools action names are closed enums: `process` supports `stop`, `continue`,
 
 ### BLE Devices
 
-BLE host calls operate on GATT characteristics of a BLE terminal session. BLE sessions own no SSH node and are absent from the sessions tree, so `nodeId` is the BLE terminal session id. A reconnect creates a new session id; stale ids fail with `ble_session_not_found` and the plugin reacquires the current id through `ble.sessions` (a focused plugin surface has no active terminal, so `terminal.getMetadata` cannot be relied on). Calls that need the link return `ble_not_connected` while the connection is down. GATT payloads never appear in logs, audit records, or error text.
+BLE host calls operate on GATT characteristics of a BLE terminal session. BLE sessions own no SSH node and are absent from the sessions tree, so `sessionId` is the BLE terminal session id. A reconnect creates a new session id; stale ids fail with `ble_session_not_found` and the plugin reacquires the current id through `ble.sessions` (a focused plugin surface has no active terminal, so `terminal.getMetadata` cannot be relied on). Calls that need the link return `ble_not_connected` while the connection is down. GATT payloads never appear in logs, audit records, or error text.
 
 | Host API | Capability | Args | Result |
 |---|---|---|---|
 | `ble.sessions` | baseline | `{}` | `{ sessions: [{ sessionId, deviceName, deviceAddress, serviceUuid, connected }] }` |
-| `ble.describe` | baseline | `{ nodeId: string }` | `{ serviceUuid, negotiatedMtu, connected, services: [{ uuid, characteristics: [{ uuid, properties }] }] }` |
-| `ble.read` | `ble.read` | `{ nodeId: string, characteristicUuid: string, serviceUuid?: string, encoding?: 'hex' \| 'base64' \| 'utf8', timeoutMs?: number, maxLength?: number }` | `{ data, encoding, length }` |
-| `ble.write` | `ble.write` | `{ nodeId: string, characteristicUuid: string, data: string, dataEncoding?: 'hex' \| 'base64' \| 'utf8', writeType?: 'withResponse' \| 'withoutResponse', serviceUuid?: string, timeoutMs?: number }` | `null` |
-| `ble.onNotification` | `ble.read` | `{ nodeId: string, characteristicUuid: string, serviceUuid?: string }` | `null` |
-| `ble.offNotification` | `ble.read` | `{ nodeId: string, characteristicUuid: string }` | `null` |
+| `ble.describe` | baseline | `{ sessionId: string }` | `{ serviceUuid, negotiatedMtu, connected, services: [{ uuid, characteristics: [{ uuid, properties }] }] }` |
+| `ble.read` | `ble.read` | `{ sessionId: string, characteristicUuid: string, serviceUuid?: string, encoding?: 'hex' \| 'base64' \| 'utf8', timeoutMs?: number, maxLength?: number }` | `{ data, encoding, length }` |
+| `ble.write` | `ble.write` | `{ sessionId: string, characteristicUuid: string, data: string, dataEncoding?: 'hex' \| 'base64' \| 'utf8', writeType?: 'withResponse' \| 'withoutResponse', serviceUuid?: string, timeoutMs?: number }` | `null` |
+| `ble.onNotification` | `ble.read` | `{ sessionId: string, characteristicUuid: string, serviceUuid?: string }` | `null` |
+| `ble.offNotification` | `ble.read` | `{ sessionId: string, characteristicUuid: string }` | `null` |
 
 `data` strings follow `encoding` / `dataEncoding`; `hex` is the default and `properties` is a bitmask of GATT property flags. `ble.sessions` owns device identity (advertised name, `null` when the device advertises none, and MAC address); `describe` reports the GATT surface only: the terminal service with all of its characteristics, the negotiated MTU, and the link state. An omitted `writeType` follows the connection profile. `timeoutMs` gives up the wait (default 5000, capped at 60000) without tearing the link down. A read exceeding `maxLength` fails with `ble_read_too_large` instead of truncating register data.
 

@@ -177,7 +177,7 @@ pub fn native_plugin_ble_response(
     match received {
         Ok(Ok(value)) => plugin_runtime::PluginResponse::ok(request_id, value),
         Ok(Err(error)) => plugin_runtime::PluginResponse::error(request_id, error),
-        Err(_) => {
+        Err(recv_error) => {
             // The task may still finish after the hook timeout. Mark the call
             // abandoned so an in-flight onNotification undoes its own
             // subscription, and release a route that registered in the final
@@ -194,12 +194,19 @@ pub fn native_plugin_ble_response(
                     &request.characteristic_uuid,
                 );
             }
+            // Timeout and a dropped sender (worker panic) need different
+            // wording: only the latter means the worker closed.
+            let message = match recv_error {
+                mpsc::RecvTimeoutError::Timeout => {
+                    "Native plugin BLE worker did not respond within the hook timeout"
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    "Native plugin BLE worker closed before returning a response"
+                }
+            };
             plugin_runtime::PluginResponse::error(
                 request_id,
-                plugin_runtime::PluginError::runtime(
-                    "plugin_ble_unavailable",
-                    "Native plugin BLE worker closed before returning a response",
-                ),
+                plugin_runtime::PluginError::runtime("plugin_ble_unavailable", message),
             )
         }
     }
@@ -249,7 +256,7 @@ async fn native_plugin_ble_result(
             )))
         }
         // Live session discovery: plugin surfaces (tabs, sidebars) hold no
-        // focused terminal, so they resolve the BLE nodeId here first. The
+        // focused terminal, so they resolve the BLE sessionId here first. The
         // projection stays at device-identity granularity.
         "sessions" => Ok(ble_sessions_json(handles.iter().map(
             |(session_id, handle)| {
@@ -461,16 +468,16 @@ fn native_plugin_ble_notification_args(
 }
 
 fn native_plugin_ble_session_id_arg(args: &Value) -> Result<String, String> {
-    // BLE owns no SSH node: args.nodeId carries the terminal session id the
+    // BLE owns no SSH node: args.sessionId carries the terminal session id the
     // workspace registry keys handles by.
-    let Some(session_id) = args.get("nodeId") else {
-        return Err("ble host call requires args.nodeId".to_string());
+    let Some(session_id) = args.get("sessionId") else {
+        return Err("ble host call requires args.sessionId".to_string());
     };
     let Some(session_id) = session_id
         .as_str()
         .filter(|session_id| !session_id.is_empty())
     else {
-        return Err("ble args.nodeId must be a session id string".to_string());
+        return Err("ble args.sessionId must be a session id string".to_string());
     };
     Ok(session_id.to_string())
 }
@@ -723,7 +730,7 @@ fn ble_runtime_error(error: BleGattError) -> plugin_runtime::PluginError {
 // text, logs, or diagnostics.
 fn ble_gatt_error_message(error: BleGattError) -> String {
     match error {
-        BleGattError::SessionNotFound => "no live BLE session matches args.nodeId".to_string(),
+        BleGattError::SessionNotFound => "no live BLE session matches args.sessionId".to_string(),
         BleGattError::NotConnected => "the BLE session is not connected".to_string(),
         BleGattError::UnsupportedCharacteristic => {
             "the characteristic is not published by this BLE session".to_string()
@@ -1024,7 +1031,7 @@ mod tests {
     #[test]
     fn ble_request_parsers_accept_documented_shapes_and_reject_malformed_values() {
         let request = native_plugin_ble_read_args(&serde_json::json!({
-            "nodeId": "ble-session-1",
+            "sessionId": "ble-session-1",
             "serviceUuid": VALID_SERVICE,
             "characteristicUuid": VALID_CHARACTERISTIC,
             "encoding": "base64",
@@ -1047,7 +1054,7 @@ mod tests {
 
         // Omitted opts fall back to documented defaults.
         let request = native_plugin_ble_read_args(&serde_json::json!({
-            "nodeId": "ble-session-1",
+            "sessionId": "ble-session-1",
             "characteristicUuid": VALID_CHARACTERISTIC,
         }))
         .unwrap();
@@ -1058,7 +1065,7 @@ mod tests {
 
         // Runaway timeout values clamp at the host boundary.
         let request = native_plugin_ble_read_args(&serde_json::json!({
-            "nodeId": "ble-session-1",
+            "sessionId": "ble-session-1",
             "characteristicUuid": VALID_CHARACTERISTIC,
             "timeoutMs": 600_000,
         }))
@@ -1066,17 +1073,17 @@ mod tests {
         assert_eq!(request.timeout_ms, BLE_MAX_TIMEOUT_MS);
 
         for (fragment, args) in [
-            ("nodeId", serde_json::json!({})),
-            ("nodeId", serde_json::json!({ "nodeId": 7 })),
-            ("characteristicUuid", serde_json::json!({ "nodeId": "s" })),
+            ("sessionId", serde_json::json!({})),
+            ("sessionId", serde_json::json!({ "sessionId": 7 })),
+            ("characteristicUuid", serde_json::json!({ "sessionId": "s" })),
             (
                 "UUID",
-                serde_json::json!({ "nodeId": "s", "characteristicUuid": "not-a-uuid" }),
+                serde_json::json!({ "sessionId": "s", "characteristicUuid": "not-a-uuid" }),
             ),
             (
                 "serviceUuid",
                 serde_json::json!({
-                    "nodeId": "s",
+                    "sessionId": "s",
                     "characteristicUuid": VALID_CHARACTERISTIC,
                     "serviceUuid": "zz",
                 }),
@@ -1084,7 +1091,7 @@ mod tests {
             (
                 "encoding",
                 serde_json::json!({
-                    "nodeId": "s",
+                    "sessionId": "s",
                     "characteristicUuid": VALID_CHARACTERISTIC,
                     "encoding": "raw",
                 }),
@@ -1092,7 +1099,7 @@ mod tests {
             (
                 "timeoutMs",
                 serde_json::json!({
-                    "nodeId": "s",
+                    "sessionId": "s",
                     "characteristicUuid": VALID_CHARACTERISTIC,
                     "timeoutMs": 0,
                 }),
@@ -1100,7 +1107,7 @@ mod tests {
             (
                 "maxLength",
                 serde_json::json!({
-                    "nodeId": "s",
+                    "sessionId": "s",
                     "characteristicUuid": VALID_CHARACTERISTIC,
                     "maxLength": 0,
                 }),
@@ -1119,7 +1126,7 @@ mod tests {
     #[test]
     fn ble_write_request_decodes_payload_by_declared_encoding() {
         let request = native_plugin_ble_write_args(&serde_json::json!({
-            "nodeId": "ble-session-1",
+            "sessionId": "ble-session-1",
             "characteristicUuid": VALID_CHARACTERISTIC,
             "data": "01A0ff",
             "writeType": "withoutResponse",
@@ -1131,7 +1138,7 @@ mod tests {
         // utf8 passes the raw string bytes through; writeType omitted follows
         // the profile snapshot held in the session state.
         let request = native_plugin_ble_write_args(&serde_json::json!({
-            "nodeId": "ble-session-1",
+            "sessionId": "ble-session-1",
             "characteristicUuid": VALID_CHARACTERISTIC,
             "dataEncoding": "utf8",
             "data": "héllo",
@@ -1144,7 +1151,7 @@ mod tests {
         // encoding failure, distinct from argument-shape errors.
         assert_eq!(
             native_plugin_ble_write_args(&serde_json::json!({
-                "nodeId": "ble-session-1",
+                "sessionId": "ble-session-1",
                 "characteristicUuid": VALID_CHARACTERISTIC,
                 "data": "zz",
             }))
@@ -1155,11 +1162,11 @@ mod tests {
 
         // Missing, empty, and mistyped payloads are argument-shape errors.
         for args in [
-            serde_json::json!({ "nodeId": "s", "characteristicUuid": VALID_CHARACTERISTIC }),
-            serde_json::json!({ "nodeId": "s", "characteristicUuid": VALID_CHARACTERISTIC, "data": "" }),
-            serde_json::json!({ "nodeId": "s", "characteristicUuid": VALID_CHARACTERISTIC, "data": 7 }),
+            serde_json::json!({ "sessionId": "s", "characteristicUuid": VALID_CHARACTERISTIC }),
+            serde_json::json!({ "sessionId": "s", "characteristicUuid": VALID_CHARACTERISTIC, "data": "" }),
+            serde_json::json!({ "sessionId": "s", "characteristicUuid": VALID_CHARACTERISTIC, "data": 7 }),
             serde_json::json!({
-                "nodeId": "s",
+                "sessionId": "s",
                 "characteristicUuid": VALID_CHARACTERISTIC,
                 "data": "00",
                 "writeType": "streamed",
@@ -1185,7 +1192,7 @@ mod tests {
             "plugin-a",
             ble_call(
                 "write",
-                serde_json::json!({ "nodeId": "s", "characteristicUuid": VALID_CHARACTERISTIC, "data": "00" }),
+                serde_json::json!({ "sessionId": "s", "characteristicUuid": VALID_CHARACTERISTIC, "data": "00" }),
             ),
             &reader,
             &handles,
@@ -1212,7 +1219,7 @@ mod tests {
         // Malformed args fail before session resolution.
         let response = native_plugin_ble_response(
             "plugin-a",
-            ble_call("read", serde_json::json!({ "nodeId": "s" })),
+            ble_call("read", serde_json::json!({ "sessionId": "s" })),
             &reader,
             &handles,
             &runtime,
@@ -1224,9 +1231,9 @@ mod tests {
         // session-not-found code for every session-scoped method.
         for method in ["describe", "read", "write", "onNotification"] {
             let args = if method == "write" {
-                serde_json::json!({ "nodeId": "gone", "characteristicUuid": VALID_CHARACTERISTIC, "data": "00" })
+                serde_json::json!({ "sessionId": "gone", "characteristicUuid": VALID_CHARACTERISTIC, "data": "00" })
             } else {
-                serde_json::json!({ "nodeId": "gone", "characteristicUuid": VALID_CHARACTERISTIC })
+                serde_json::json!({ "sessionId": "gone", "characteristicUuid": VALID_CHARACTERISTIC })
             };
             let granted = if method == "write" { &writer } else { &reader };
             let response = native_plugin_ble_response(
@@ -1249,7 +1256,7 @@ mod tests {
             "plugin-a",
             ble_call(
                 "offNotification",
-                serde_json::json!({ "nodeId": "gone", "characteristicUuid": VALID_CHARACTERISTIC }),
+                serde_json::json!({ "sessionId": "gone", "characteristicUuid": VALID_CHARACTERISTIC }),
             ),
             &reader,
             &handles,

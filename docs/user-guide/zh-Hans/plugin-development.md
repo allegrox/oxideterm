@@ -1910,16 +1910,16 @@ Host Tools 动作名称是封闭枚举：`process` 通过 `execute` 支持 `stop
 
 ### BLE 设备
 
-BLE 宿主调用作用于 BLE 终端会话的 GATT 特征值。BLE 会话没有 SSH 节点，也不出现在会话树中，因此 `nodeId` 是 BLE 终端会话 id。重连会生成新的会话 id，旧 id 返回 `ble_session_not_found`，由插件通过 `ble.sessions` 重新获取当前 id（插件界面聚焦时活动终端为空，不能依赖 `terminal.getMetadata`）。依赖链路的调用在连接断开时返回 `ble_not_connected`。GATT 载荷不会进入日志、审计记录或错误文本。
+BLE 宿主调用作用于 BLE 终端会话的 GATT 特征值。BLE 会话没有 SSH 节点，也不出现在会话树中，因此 `sessionId` 是 BLE 终端会话 id。重连会生成新的会话 id，旧 id 返回 `ble_session_not_found`，由插件通过 `ble.sessions` 重新获取当前 id（插件界面聚焦时活动终端为空，不能依赖 `terminal.getMetadata`）。依赖链路的调用在连接断开时返回 `ble_not_connected`。GATT 载荷不会进入日志、审计记录或错误文本。
 
 | 宿主 API | 能力 | 参数 | 返回 |
 |---|---|---|---|
 | `ble.sessions` | 默认可用 | `{}` | `{ sessions: [{ sessionId, deviceName, deviceAddress, serviceUuid, connected }] }` |
-| `ble.describe` | 默认可用 | `{ nodeId: string }` | `{ serviceUuid, negotiatedMtu, connected, services: [{ uuid, characteristics: [{ uuid, properties }] }] }` |
-| `ble.read` | `ble.read` | `{ nodeId: string, characteristicUuid: string, serviceUuid?: string, encoding?: 'hex' \| 'base64' \| 'utf8', timeoutMs?: number, maxLength?: number }` | `{ data, encoding, length }` |
-| `ble.write` | `ble.write` | `{ nodeId: string, characteristicUuid: string, data: string, dataEncoding?: 'hex' \| 'base64' \| 'utf8', writeType?: 'withResponse' \| 'withoutResponse', serviceUuid?: string, timeoutMs?: number }` | `null` |
-| `ble.onNotification` | `ble.read` | `{ nodeId: string, characteristicUuid: string, serviceUuid?: string }` | `null` |
-| `ble.offNotification` | `ble.read` | `{ nodeId: string, characteristicUuid: string }` | `null` |
+| `ble.describe` | 默认可用 | `{ sessionId: string }` | `{ serviceUuid, negotiatedMtu, connected, services: [{ uuid, characteristics: [{ uuid, properties }] }] }` |
+| `ble.read` | `ble.read` | `{ sessionId: string, characteristicUuid: string, serviceUuid?: string, encoding?: 'hex' \| 'base64' \| 'utf8', timeoutMs?: number, maxLength?: number }` | `{ data, encoding, length }` |
+| `ble.write` | `ble.write` | `{ sessionId: string, characteristicUuid: string, data: string, dataEncoding?: 'hex' \| 'base64' \| 'utf8', writeType?: 'withResponse' \| 'withoutResponse', serviceUuid?: string, timeoutMs?: number }` | `null` |
+| `ble.onNotification` | `ble.read` | `{ sessionId: string, characteristicUuid: string, serviceUuid?: string }` | `null` |
+| `ble.offNotification` | `ble.read` | `{ sessionId: string, characteristicUuid: string }` | `null` |
 
 `data` 字符串按 `encoding` / `dataEncoding` 编码，默认 `hex`；`properties` 是 GATT 属性位掩码。设备身份（广播名称，无名称时为 `null`；MAC 地址）由 `ble.sessions` 独占提供；`describe` 只返回 GATT 表面：终端使用的服务及其全部特征、协商 MTU 与链路状态。`writeType` 缺省时沿用连接档案。`timeoutMs` 表示放弃等待（默认 5000，上限 60000），不会断开链路。读取超过 `maxLength` 时报 `ble_read_too_large`，不截断寄存器数据。
 
