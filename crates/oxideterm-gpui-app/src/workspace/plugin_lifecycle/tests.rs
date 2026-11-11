@@ -1507,6 +1507,35 @@ fn terminal_write_host_calls_parse_text_and_node_id() {
             if node_id == "node-1" && text == "pwd\n"
     ));
 
+    let local = native_plugin_terminal_action_from_call(&plugin_runtime::PluginHostCall {
+        request_id: "terminal-write-local".to_string(),
+        namespace: "terminal".to_string(),
+        method: "writeLocal".to_string(),
+        args: serde_json::json!({ "terminalId": "session-7", "text": "help\r\n" }),
+    })
+    .unwrap();
+    assert!(matches!(
+        local,
+        NativePluginTerminalAction::WriteLocal { ref terminal_id, ref text }
+            if terminal_id.as_deref() == Some("session-7") && text == "help\r\n"
+    ));
+
+    // A node id must not address a local write; only terminalId selects the
+    // session, otherwise the write falls back to the active terminal.
+    let local_without_session =
+        native_plugin_terminal_action_from_call(&plugin_runtime::PluginHostCall {
+            request_id: "terminal-write-local-active".to_string(),
+            namespace: "terminal".to_string(),
+            method: "writeLocal".to_string(),
+            args: serde_json::json!({ "nodeId": "node-1", "text": "help\r\n" }),
+        })
+        .unwrap();
+    assert!(matches!(
+        local_without_session,
+        NativePluginTerminalAction::WriteLocal { ref terminal_id, .. }
+            if terminal_id.is_none()
+    ));
+
     let clear = native_plugin_terminal_action_from_call(&plugin_runtime::PluginHostCall {
         request_id: "terminal-clear-buffer".to_string(),
         namespace: "terminal".to_string(),
