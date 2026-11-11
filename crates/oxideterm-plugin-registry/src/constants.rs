@@ -11,11 +11,8 @@ pub(crate) const PLUGIN_MANIFEST_FILENAME: &str = "plugin.json";
 pub(crate) const PLUGIN_CONFIG_SCHEMA_VERSION: u32 = 1;
 pub(crate) const PLUGIN_STORAGE_MAX_KEY_BYTES: usize = 256;
 pub(crate) const PLUGIN_STORAGE_MAX_PLUGIN_BYTES: usize = 256 * 1024;
-#[allow(dead_code)]
 pub(crate) const PLUGIN_PACKAGE_MAX_BYTES: u64 = 50 * 1024 * 1024;
-#[allow(dead_code)]
 pub(crate) const PLUGIN_PACKAGE_MAX_EXTRACTED_BYTES: u64 = 100 * 1024 * 1024;
-#[allow(dead_code)]
 pub(crate) const PLUGIN_PACKAGE_MAX_ENTRIES: usize = 2048;
 pub const NATIVE_PLUGIN_UI_EVENT: &str = "ui.event";
 pub(crate) const NATIVE_PLUGIN_DECLARATIVE_UI_FORM_KIND: &str = "form";
