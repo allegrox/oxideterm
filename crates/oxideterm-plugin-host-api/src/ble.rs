@@ -311,13 +311,25 @@ async fn native_plugin_ble_result(
             }
             bridge.register(BleNotificationRouteRegistration {
                 plugin_id: plugin_id.to_string(),
-                session_id: request.session_id,
+                session_id: request.session_id.clone(),
                 characteristic: request.characteristic_uuid,
                 route_id,
                 receiver,
                 handle,
                 cancel_token: Arc::new(CancellationToken::new()),
             });
+            if abandoned.load(Ordering::SeqCst) {
+                // A hook timeout between the check above and this register ran
+                // its cancel against an empty table, so undo the route this
+                // call just added; the pump performs its own CCCD teardown on
+                // cancel. Without this re-check the plugin has already been
+                // answered with an error while an orphan pump keeps dispatching.
+                bridge.cancel(
+                    plugin_id,
+                    &request.session_id,
+                    &request.characteristic_uuid,
+                );
+            }
             Ok(Value::Null)
         }
         "offNotification" => {
