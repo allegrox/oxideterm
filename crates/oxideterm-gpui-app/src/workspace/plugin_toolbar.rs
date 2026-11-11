@@ -703,3 +703,112 @@ mod tests {
         assert!(load_plugin_locale_bundle(dir.path(), "absent", "zh-CN").is_empty());
     }
 }
+
+#[cfg(test)]
+mod overlay_lifecycle_tests {
+    use super::*;
+    use crate::workspace::session_manager::tests::isolated_workspace_fixture;
+    use gpui::TestAppContext;
+
+    /// WorkspaceApp owns process-wide storage, so run the overlay state
+    /// machine against an isolated portable fixture directory like the other
+    /// workspace-level tests.
+    fn overlay_test_workspace(cx: &mut TestAppContext) -> Option<Entity<WorkspaceApp>> {
+        let _fixture_dir =
+            isolated_workspace_fixture(cx, "OXIDETERM_PLUGIN_OVERLAY_TEST_DIR")?;
+        let settings_path = default_settings_path();
+        let mut settings = SettingsStore::load_from_path(settings_path).unwrap();
+        settings.settings_mut().ssh_config.auto_load_hosts = false;
+        settings.settings_mut().onboarding_completed = true;
+        settings.save().unwrap();
+        // The claim path spawns the visibility poll loop on the workspace.
+        cx.executor().allow_parking();
+        let (shell, _window_cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| WorkspaceApp::new(window, cx, None, None).unwrap());
+            WorkspaceWindowShell::new(workspace, window, cx)
+        });
+        Some(shell.read_with(cx, |shell, _| shell.session_entity()))
+    }
+
+    #[gpui::test]
+    fn same_pane_second_action_preempts_and_foreign_release_keeps_anchor(
+        cx: &mut TestAppContext,
+    ) {
+        let Some(workspace) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let pane = PaneId(1);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
+            let (first_action, first_generation) = {
+                let anchor = ws.plugin_overlay_anchor.as_ref().expect("first claim anchors");
+                (anchor.action_id.clone(), anchor.generation)
+            };
+            assert_eq!(first_action, "a1");
+
+            // H1: a second overlay action on the same pane must not silently
+            // share the anchor; it preempts and claims with a newer generation.
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, pane, None, cx);
+            let second_generation = {
+                let anchor = ws.plugin_overlay_anchor.as_ref().expect("second claim anchors");
+                assert_eq!(anchor.action_id, "a2");
+                assert_eq!(anchor.pane_id, pane);
+                anchor.generation
+            };
+            assert!(second_generation > first_generation);
+
+            // Re-applying the anchored action's own state keeps the anchor.
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, pane, None, cx);
+            assert_eq!(
+                ws.plugin_overlay_anchor.as_ref().unwrap().generation,
+                second_generation
+            );
+
+            // H1: a non-anchored action leaving overlay must not release it.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", false, pane, None, cx);
+            assert_eq!(ws.plugin_overlay_anchor.as_ref().unwrap().action_id, "a2");
+        });
+    }
+
+    #[gpui::test]
+    fn release_then_reclaim_starts_a_new_generation(cx: &mut TestAppContext) {
+        let Some(workspace) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let pane = PaneId(2);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
+            let generation = ws.plugin_overlay_anchor.as_ref().unwrap().generation;
+            // The claim path spawned exactly one poll loop for this generation.
+            assert!(ws.plugin_overlay_anchor.as_ref().unwrap().timer_active);
+
+            // Release: the anchored action itself leaves the overlay state.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", false, pane, None, cx);
+            assert!(ws.plugin_overlay_anchor.is_none());
+
+            // H2: a reclaim right after release must carry a newer generation
+            // so the retired poll loop cannot serve the replacement anchor.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
+            let anchor = ws.plugin_overlay_anchor.as_ref().expect("reclaim anchors");
+            assert!(anchor.generation > generation);
+            assert!(anchor.timer_active);
+        });
+    }
+
+    #[gpui::test]
+    fn pane_close_releases_anchor_and_state_entries(cx: &mut TestAppContext) {
+        let Some(workspace) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let pane = PaneId(3);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
+            ws.plugin_toolbar_states
+                .insert(("p".to_string(), "a1".to_string(), pane), "overlay".to_string());
+
+            ws.plugin_toolbar_pane_closed(&pane, cx);
+            assert!(ws.plugin_overlay_anchor.is_none());
+            assert!(ws.plugin_toolbar_states.is_empty());
+        });
+    }
+}

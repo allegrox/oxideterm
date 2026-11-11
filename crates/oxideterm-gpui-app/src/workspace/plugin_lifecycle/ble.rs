@@ -241,3 +241,61 @@ async fn run_ble_notification_pump(
     // route's CCCD responsibility.
     let _ = handle.notify_unsubscribe(characteristic, route_id).await;
 }
+
+#[cfg(test)]
+mod router_tests {
+    use super::*;
+
+    fn characteristic(tag: u8) -> Uuid {
+        Uuid::from_bytes([tag; 16])
+    }
+
+    fn seed_route(
+        router: &BleNotificationRouter,
+        plugin: &str,
+        session: &str,
+        uuid: Uuid,
+    ) -> Arc<CancellationToken> {
+        let token = Arc::new(CancellationToken::new());
+        router
+            .routes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert((plugin.to_string(), session.to_string(), uuid), token.clone());
+        token
+    }
+
+    #[test]
+    fn cancel_removes_the_route_and_cancels_only_that_token() {
+        let (router, mut registrations) = BleNotificationRouter::new();
+        let token_a = seed_route(&router, "p", "s1", characteristic(1));
+        let token_b = seed_route(&router, "p", "s1", characteristic(2));
+        let bridge = router.bridge();
+
+        assert!(bridge.cancel("p", "s1", &characteristic(1)));
+        assert!(token_a.is_cancelled());
+        assert!(!token_b.is_cancelled());
+        // The route is gone: a second cancel reports nothing was removed.
+        assert!(!bridge.cancel("p", "s1", &characteristic(1)));
+        // A different plugin never cancels someone else's route.
+        assert!(!bridge.cancel("other", "s1", &characteristic(2)));
+        // cancel() must not enqueue registrations for the dispatcher.
+        assert!(registrations.try_recv().is_err());
+    }
+
+    #[test]
+    fn deactivation_cancels_every_route_of_that_plugin_only() {
+        let (router, _registrations) = BleNotificationRouter::new();
+        let token_p1 = seed_route(&router, "p", "s1", characteristic(1));
+        let token_p2 = seed_route(&router, "p", "s2", characteristic(2));
+        let token_q = seed_route(&router, "q", "s1", characteristic(3));
+
+        router.cancel_all_for_plugin("p");
+        assert!(token_p1.is_cancelled());
+        assert!(token_p2.is_cancelled());
+        assert!(!token_q.is_cancelled());
+        // Only p's rows left the table: q's route still cancels normally.
+        let bridge = router.bridge();
+        assert!(bridge.cancel("q", "s1", &characteristic(3)));
+    }
+}
