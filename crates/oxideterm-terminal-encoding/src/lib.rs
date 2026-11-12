@@ -3,7 +3,9 @@
 
 use std::{borrow::Cow, fmt};
 
-use encoding_rs::{BIG5, EUC_JP, EUC_KR, Encoding, GB18030, GBK, SHIFT_JIS, UTF_8, WINDOWS_1252};
+use encoding_rs::{
+    BIG5, EUC_JP, EUC_KR, EncoderResult, Encoding, GB18030, GBK, SHIFT_JIS, UTF_8, WINDOWS_1252,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -162,8 +164,10 @@ impl TerminalInputEncoder {
             return Cow::Borrowed(text.as_bytes());
         }
 
-        let (bytes, _encoding, _had_errors) = self.encoding.encoding_rs().encode(text);
-        bytes
+        Cow::Owned(encode_without_html_references(
+            self.encoding.encoding_rs(),
+            text,
+        ))
     }
 
     pub fn encode_paste(self, text: &str, bracketed: bool) -> Vec<u8> {
@@ -187,6 +191,31 @@ impl TerminalInputEncoder {
     }
 }
 
+/// Encodes `text`, sending `?` for a character that `encoding` can't represent.
+///
+/// `Encoding::encode` follows HTML form submission and replaces such a
+/// character with a numeric character reference like `&#128512;`, which a
+/// remote shell would receive as typed text. The buffer is sized for the
+/// worst case up front so pasted secrets are not left behind by reallocation.
+fn encode_without_html_references(encoding: &'static Encoding, text: &str) -> Vec<u8> {
+    let mut encoder = encoding.new_encoder();
+    let worst_case = encoder
+        .max_buffer_length_from_utf8_without_replacement(text.len())
+        .unwrap_or(text.len().saturating_mul(4));
+    let mut bytes = Vec::with_capacity(worst_case);
+    let mut remaining = text;
+    loop {
+        let (result, read) =
+            encoder.encode_from_utf8_to_vec_without_replacement(remaining, &mut bytes, true);
+        remaining = &remaining[read..];
+        match result {
+            EncoderResult::InputEmpty => return bytes,
+            EncoderResult::Unmappable(_) => bytes.push(b'?'),
+            EncoderResult::OutputFull => bytes.reserve(remaining.len().saturating_mul(4)),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EncodingHint {
     pub suggestions: Vec<TerminalEncoding>,
@@ -201,6 +230,10 @@ pub struct EncodingMismatchDetector {
     observed_bytes: usize,
     sample: Vec<u8>,
     invalid_bytes: usize,
+    // The start of a UTF-8 sequence that the last read cut off, completed by
+    // the next one before it is judged.
+    incomplete: [u8; 3],
+    incomplete_len: usize,
     emitted: bool,
 }
 
@@ -217,6 +250,8 @@ impl EncodingMismatchDetector {
             observed_bytes: 0,
             sample: Vec::new(),
             invalid_bytes: 0,
+            incomplete: [0; 3],
+            incomplete_len: 0,
             emitted: false,
         }
     }
@@ -231,7 +266,8 @@ impl EncodingMismatchDetector {
         }
 
         self.observed_bytes = self.observed_bytes.saturating_add(bytes.len());
-        self.invalid_bytes = self.invalid_bytes.saturating_add(invalid_utf8_bytes(bytes));
+        let invalid = self.invalid_utf8_bytes(bytes);
+        self.invalid_bytes = self.invalid_bytes.saturating_add(invalid);
         let remaining = Self::MAX_SAMPLE_BYTES.saturating_sub(self.sample.len());
         self.sample
             .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
@@ -260,6 +296,66 @@ impl EncodingMismatchDetector {
             sample_bytes: self.sample.len(),
             invalid_ratio: ratio,
         })
+    }
+}
+
+impl EncodingMismatchDetector {
+    /// Counts the bytes of `bytes` that are not UTF-8, treating a sequence
+    /// split across reads as the whole sequence.
+    fn invalid_utf8_bytes(&mut self, mut bytes: &[u8]) -> usize {
+        let mut invalid = 0;
+        if self.incomplete_len != 0 {
+            let pending = self.incomplete_len;
+            let width = match self.incomplete[0] {
+                0xf0..=0xff => 4,
+                0xe0..=0xef => 3,
+                _ => 2,
+            };
+            let taken = (width - pending).min(bytes.len());
+            let mut joined = [0; 4];
+            joined[..pending].copy_from_slice(&self.incomplete[..pending]);
+            joined[pending..pending + taken].copy_from_slice(&bytes[..taken]);
+            let joined = &joined[..pending + taken];
+            self.incomplete_len = 0;
+            match std::str::from_utf8(joined) {
+                Ok(_) => bytes = &bytes[taken..],
+                Err(error) => match error.error_len() {
+                    // Still cut off: `taken` used up this read.
+                    None => {
+                        self.incomplete[..joined.len()].copy_from_slice(joined);
+                        self.incomplete_len = joined.len();
+                        return 0;
+                    }
+                    Some(len) => {
+                        invalid += len;
+                        bytes = &bytes[len.saturating_sub(pending)..];
+                    }
+                },
+            }
+        }
+
+        let mut index = 0;
+        while index < bytes.len() {
+            match std::str::from_utf8(&bytes[index..]) {
+                Ok(_) => break,
+                Err(error) => {
+                    index += error.valid_up_to();
+                    match error.error_len() {
+                        Some(len) => {
+                            invalid += len;
+                            index += len;
+                        }
+                        None => {
+                            let tail = &bytes[index..];
+                            self.incomplete[..tail.len()].copy_from_slice(tail);
+                            self.incomplete_len = tail.len();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        invalid
     }
 }
 
@@ -296,30 +392,6 @@ fn score_decoded_text(encoding: TerminalEncoding, sample: &[u8]) -> i32 {
         }
     }
     score
-}
-
-fn invalid_utf8_bytes(bytes: &[u8]) -> usize {
-    let mut index = 0;
-    let mut invalid = 0;
-    while index < bytes.len() {
-        match std::str::from_utf8(&bytes[index..]) {
-            Ok(_) => break,
-            Err(error) => {
-                index += error.valid_up_to();
-                match error.error_len() {
-                    Some(len) => {
-                        invalid += len;
-                        index += len;
-                    }
-                    None => {
-                        invalid += bytes.len().saturating_sub(index);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    invalid
 }
 
 fn prepare_paste_text(text: &str, bracketed: bool) -> Zeroizing<String> {
@@ -417,6 +489,29 @@ mod tests {
     }
 
     #[test]
+    fn unmappable_input_becomes_a_question_mark_instead_of_an_html_reference() {
+        // encoding_rs's `Encoding::encode` follows HTML form submission and
+        // would send `&#128512;` to the remote shell.
+        let samples: &[(TerminalEncoding, &str, &[u8])] = &[
+            (TerminalEncoding::Gbk, "a😀你", b"a?\xc4\xe3"),
+            (TerminalEncoding::Big5, "é體", b"?\xc5\xe9"),
+            (TerminalEncoding::ShiftJis, "한こ", b"?\x82\xb1"),
+            (TerminalEncoding::EucKr, "😀한", b"?\xc7\xd1"),
+            (TerminalEncoding::Windows1252, "中é€", b"?\xe9\x80"),
+            // GB18030 maps every character, so nothing is replaced.
+            (TerminalEncoding::Gb18030, "😀", b"\x94\x39\xfc\x36"),
+        ];
+        for &(encoding, text, wire) in samples {
+            let encoder = TerminalInputEncoder::new(encoding);
+            assert_eq!(encoder.encode_text(text).as_ref(), wire, "{encoding}");
+            let mut pasted = b"\x1b[200~".to_vec();
+            pasted.extend_from_slice(wire);
+            pasted.extend_from_slice(b"\x1b[201~");
+            assert_eq!(encoder.encode_paste(text, true), pasted, "{encoding}");
+        }
+    }
+
+    #[test]
     fn bracketed_paste_wraps_raw_protocol_and_encodes_only_content() {
         let encoded =
             TerminalInputEncoder::new(TerminalEncoding::Gbk).encode_paste("你好\n世界\x1b", true);
@@ -473,5 +568,40 @@ mod tests {
                 assert!(hint.is_none());
             }
         }
+    }
+
+    #[test]
+    fn mismatch_detector_counts_utf8_split_across_reads_as_valid() {
+        let utf8 = "你好世界，终端输出".repeat(16);
+        let gbk = TerminalInputEncoder::new(TerminalEncoding::Gbk)
+            .encode_text(&utf8)
+            .into_owned();
+        // Small reads, as a serial line delivers them, split most characters.
+        for chunk_len in [1, 2, 5, 7] {
+            let mut detector = EncodingMismatchDetector::new(TerminalEncoding::Utf8);
+            let hints = utf8
+                .as_bytes()
+                .chunks(chunk_len)
+                .filter_map(|chunk| detector.observe(chunk))
+                .count();
+            assert_eq!(hints, 0, "UTF-8 in {chunk_len}-byte reads");
+            assert_eq!(detector.invalid_bytes, 0, "UTF-8 in {chunk_len}-byte reads");
+
+            let mut detector = EncodingMismatchDetector::new(TerminalEncoding::Utf8);
+            let hint = gbk
+                .chunks(chunk_len)
+                .find_map(|chunk| detector.observe(chunk))
+                .unwrap_or_else(|| panic!("GBK in {chunk_len}-byte reads"));
+            assert!(hint.suggestions.contains(&TerminalEncoding::Gbk));
+        }
+
+        // A cut-off sequence that the next read doesn't complete is still invalid.
+        let mut detector = EncodingMismatchDetector::new(TerminalEncoding::Utf8);
+        detector.observe(b"a\xe4\xbd");
+        assert_eq!(detector.invalid_bytes, 0);
+        detector.observe(b"A\xe4");
+        assert_eq!(detector.invalid_bytes, 2);
+        detector.observe(b"\xbd\xa0");
+        assert_eq!(detector.invalid_bytes, 2);
     }
 }
