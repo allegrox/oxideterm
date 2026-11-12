@@ -261,7 +261,10 @@ mod router_tests {
             .routes
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .insert((plugin.to_string(), session.to_string(), uuid), token.clone());
+            .insert(
+                (plugin.to_string(), session.to_string(), uuid),
+                token.clone(),
+            );
         token
     }
 
