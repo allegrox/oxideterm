@@ -331,11 +331,7 @@ async fn native_plugin_ble_result(
                 // call just added; the pump performs its own CCCD teardown on
                 // cancel. Without this re-check the plugin has already been
                 // answered with an error while an orphan pump keeps dispatching.
-                bridge.cancel(
-                    plugin_id,
-                    &request.session_id,
-                    &request.characteristic_uuid,
-                );
+                bridge.cancel(plugin_id, &request.session_id, &request.characteristic_uuid);
             }
             Ok(Value::Null)
         }
@@ -1075,7 +1071,10 @@ mod tests {
         for (fragment, args) in [
             ("sessionId", serde_json::json!({})),
             ("sessionId", serde_json::json!({ "sessionId": 7 })),
-            ("characteristicUuid", serde_json::json!({ "sessionId": "s" })),
+            (
+                "characteristicUuid",
+                serde_json::json!({ "sessionId": "s" }),
+            ),
             (
                 "UUID",
                 serde_json::json!({ "sessionId": "s", "characteristicUuid": "not-a-uuid" }),

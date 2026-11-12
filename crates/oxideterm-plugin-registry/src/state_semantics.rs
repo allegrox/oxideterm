@@ -37,17 +37,13 @@ pub fn native_plugin_state_is_error_like(state: NativePluginState) -> bool {
 pub fn native_plugin_process_activatable(plugin: &NativePluginInfo) -> bool {
     matches!(
         plugin.state,
-        NativePluginState::ReadyProcess
-            | NativePluginState::Loading
-            | NativePluginState::Active
-    ) && matches!(
-        plugin.runtime_plan,
-        NativePluginRuntimePlan::Process { .. }
-    ) && !native_plugin_requires_permission_review(
-        &plugin.manifest,
-        &plugin.runtime_plan,
-        &plugin.config,
-    )
+        NativePluginState::ReadyProcess | NativePluginState::Loading | NativePluginState::Active
+    ) && matches!(plugin.runtime_plan, NativePluginRuntimePlan::Process { .. })
+        && !native_plugin_requires_permission_review(
+            &plugin.manifest,
+            &plugin.runtime_plan,
+            &plugin.config,
+        )
 }
 
 pub fn native_plugin_error_has_code(error: &str, code: &str) -> bool {
