@@ -1,5 +1,14 @@
 use super::*;
 
+/// `toolbar.overlayClosed` reason: the pane keeps its overlay membership and
+/// the host opens the card again in this same event batch (focus handover),
+/// so the plugin may keep per-pane card state instead of tearing it down.
+const OVERLAY_CLOSED_REASON_REBOUND: &str = "rebound";
+/// `toolbar.overlayClosed` reason: the pane genuinely left the overlay
+/// (released the state, closed the card, or the pane closed), so the plugin
+/// should drop any per-pane card state it kept.
+const OVERLAY_CLOSED_REASON_RELEASED: &str = "released";
+
 /// Overlay membership registered by the pane whose toolbar state declares
 /// `overlay`. Several panes may hold membership at once; the single physical
 /// card binds to whichever member is the active pane. The host owns the
@@ -178,7 +187,11 @@ impl WorkspaceApp {
                     self.dispatch_native_plugin_event(
                         previous.plugin_id.clone(),
                         plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
-                        serde_json::json!({ "actionId": previous.action_id, "paneId": pane_id.0 }),
+                        serde_json::json!({
+                            "actionId": previous.action_id,
+                            "paneId": pane_id.0,
+                            "reason": OVERLAY_CLOSED_REASON_RELEASED,
+                        }),
                         cx,
                     );
                 }
@@ -233,7 +246,11 @@ impl WorkspaceApp {
                     self.dispatch_native_plugin_event(
                         member.plugin_id,
                         plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
-                        serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 }),
+                        serde_json::json!({
+                            "actionId": member.action_id,
+                            "paneId": pane_id.0,
+                            "reason": OVERLAY_CLOSED_REASON_RELEASED,
+                        }),
                         cx,
                     );
                 }
@@ -247,7 +264,9 @@ impl WorkspaceApp {
     /// Moves the single card to `pane_id`: closes the member that currently
     /// holds it (if another one does) and opens the new holder. Members that
     /// never held the card receive no events, so open/close stays strictly
-    /// paired per pane.
+    /// paired per pane. The closed→opened pair is dispatched in the same
+    /// batch, so a plugin that keeps per-pane state can treat the handover as
+    /// a rebind rather than a teardown.
     fn bind_plugin_overlay(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
         let previous_owner = self
             .plugin_overlay_members
@@ -255,7 +274,7 @@ impl WorkspaceApp {
             .find(|(owner_pane, member)| member.opened && **owner_pane != pane_id)
             .map(|(owner_pane, _)| *owner_pane);
         if let Some(owner_pane) = previous_owner {
-            self.close_plugin_overlay_member(owner_pane, cx);
+            self.close_plugin_overlay_member(owner_pane, OVERLAY_CLOSED_REASON_REBOUND, cx);
         }
         if let Some(member) = self.plugin_overlay_members.get_mut(&pane_id) {
             if !member.opened {
@@ -276,14 +295,25 @@ impl WorkspaceApp {
     /// Dispatches `toolbar.overlayClosed` for the card holder and clears its
     /// open and visibility bookkeeping so a later rebind starts a fresh event
     /// pair. The member keeps its overlay membership and chip state.
-    fn close_plugin_overlay_member(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
+    /// `reason` tells the plugin whether the card may be rebound in this same
+    /// event batch (`rebound`) or the pane genuinely left the overlay.
+    fn close_plugin_overlay_member(
+        &mut self,
+        pane_id: PaneId,
+        reason: &str,
+        cx: &mut Context<Self>,
+    ) {
         let Some(member) = self.plugin_overlay_members.get_mut(&pane_id) else {
             return;
         };
         member.opened = false;
         member.visible = false;
         let plugin_id = member.plugin_id.clone();
-        let payload = serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 });
+        let payload = serde_json::json!({
+            "actionId": member.action_id,
+            "paneId": pane_id.0,
+            "reason": reason,
+        });
         self.dispatch_native_plugin_event(
             plugin_id,
             plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
@@ -635,7 +665,11 @@ impl WorkspaceApp {
                 self.dispatch_native_plugin_event(
                     member.plugin_id,
                     plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
-                    serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 }),
+                    serde_json::json!({
+                        "actionId": member.action_id,
+                        "paneId": pane_id.0,
+                        "reason": OVERLAY_CLOSED_REASON_RELEASED,
+                    }),
                     cx,
                 );
             }
