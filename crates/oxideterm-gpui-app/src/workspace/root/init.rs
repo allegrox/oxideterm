@@ -726,7 +726,7 @@ impl WorkspaceApp {
             ai_entity,
             acp_entity,
             mosh_plugin_sessions: Arc::new(oxideterm_mosh::MoshPluginSessions::default()),
-            plugin_overlay_anchor: None,
+            plugin_overlay_members: HashMap::new(),
             plugin_overlay_generation: 0,
             plugin_toolbar_states: HashMap::new(),
             skill_registry,

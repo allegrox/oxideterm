@@ -894,11 +894,13 @@ pub(crate) struct WorkspaceApp {
     ai_entity: Entity<ai_state::AiWorkspaceEntity>,
     acp_entity: Entity<acp_workspace::AcpWorkspaceEntity>,
     mosh_plugin_sessions: Arc<oxideterm_mosh::MoshPluginSessions>,
-    // Workspace-unique overlay anchor for a plugin toolbar state that
-    // declares `overlay`; in-memory only, never persisted. The host owns the
-    // anchor, the render gate, and the card chrome, while the plugin owns the
-    // card content and refresh semantics.
-    plugin_overlay_anchor: Option<plugin_toolbar::PluginOverlayAnchor>,
+    // Panes whose plugin toolbar state currently declares `overlay`; one
+    // member per pane, in-memory only, never persisted. The single physical
+    // card binds to whichever member is the active pane; the binding is
+    // derived from focus, never stored. The host owns the binding
+    // transitions, the render gate, and the card chrome, while the plugin
+    // owns the card content and refresh semantics.
+    plugin_overlay_members: HashMap<PaneId, plugin_toolbar::PluginOverlayAnchor>,
     // Monotonic counter feeding each claimed anchor's generation so retired
     // poll loops can detect that a newer claim replaced theirs.
     plugin_overlay_generation: u64,

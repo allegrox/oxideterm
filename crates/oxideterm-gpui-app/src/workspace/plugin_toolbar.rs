@@ -1,26 +1,34 @@
 use super::*;
 
-/// Workspace-unique overlay anchor claimed by the pane whose toolbar state
-/// declares `overlay`. The host owns the anchor, the render gate, the card
-/// chrome, and the visibility events; the plugin owns the card content and
-/// every semantic attached to the state id.
+/// Overlay membership registered by the pane whose toolbar state declares
+/// `overlay`. Several panes may hold membership at once; the single physical
+/// card binds to whichever member is the active pane. The host owns the
+/// binding transitions, the render gate, the card chrome, and the visibility
+/// events; the plugin owns the card content and every semantic attached to
+/// the state id.
 #[derive(Clone)]
 pub(in crate::workspace) struct PluginOverlayAnchor {
     pub plugin_id: String,
     pub action_id: String,
     pub pane_id: PaneId,
     pub window: Option<gpui::AnyWindowHandle>,
+    /// Whether `toolbar.overlayOpened` is outstanding for this member, i.e.
+    /// it currently holds the card. Only the bound member can hold the card,
+    /// so at most one member is opened at a time; focus changes rebind the
+    /// card through a closed/opened pair while losing focus to a non-member
+    /// pane only hides the holder.
+    pub opened: bool,
     /// Last visibility value delivered to the plugin; the poll only emits
     /// changes so the plugin never receives duplicate notifications.
     pub visible: bool,
-    /// Whether a visibility poll loop is serving this anchor's generation.
-    /// The single-flight guard in the spawn helper checks it so one anchor
-    /// never gets two concurrent loops.
+    /// Whether a visibility poll loop was started for this member's
+    /// generation. The single-flight guard in the spawn helper checks it so
+    /// the member table never gets two concurrent loops.
     pub timer_active: bool,
-    /// Monotonic counter incremented on each reclaim. The visibility poll loop
-    /// captures this at spawn time and exits when it no longer matches, so a
-    /// release followed by a reclaim within 1s cannot leave two concurrent
-    /// loops polling the same anchor.
+    /// Monotonic counter captured at claim time. The visibility poll loop
+    /// compares it against the workspace counter each tick and exits when a
+    /// newer claim superseded it, so a release followed by a reclaim within
+    /// 1s cannot leave two concurrent loops polling the same table.
     pub generation: u64,
 }
 
@@ -28,9 +36,10 @@ pub(in crate::workspace) struct PluginOverlayAnchor {
 /// manifest (`contributes.terminalToolbar`) is the discovery channel: the host
 /// renders one chip per contributed action on every terminal pane, stores the
 /// per-pane state id, and reports clicks by `plugin_id:action_id`. State ids
-/// are opaque here; a state may declare `overlay`, which turns the chip into
-/// the anchor primitive below: the host pins a card to the pane, gates it on
-/// focus, and forwards visibility events while the plugin renders the content.
+/// are opaque here; a state may declare `overlay`, which registers the pane
+/// as an overlay member: the host keeps one card, binds it to the member that
+/// is the active pane, gates it on focus, and forwards open/close and
+/// visibility events while the plugin renders the content.
 impl WorkspaceApp {
     /// Installed, enabled, and activatable as a process runtime. Mirrors the
     /// connection-plugin predicate; permission review blocks activation.
@@ -111,13 +120,15 @@ impl WorkspaceApp {
         self.sync_plugin_toolbar_state(cx);
     }
 
-    /// Claims or releases the workspace-unique overlay anchor for the pane's
-    /// reported state. A claim preempts a different pane's anchor by demoting
-    /// that pane's action to its declared default state; a release happens
-    /// when the anchored pane leaves the overlay state. The runtime is
-    /// started before `toolbar.overlayOpened` so the plugin process can
-    /// receive it, and stopped only after `toolbar.overlayClosed` so a
-    /// closing plugin still sees the event.
+    /// Registers or releases the pane's overlay membership for the reported
+    /// state. Membership is per pane and never preempts another pane: the
+    /// card binding follows the active pane instead. A claim opens the card
+    /// in place only when the claiming pane is already the bound one;
+    /// otherwise the pane only joins the table and the visibility poll opens
+    /// the card when focus arrives. The runtime is started before
+    /// `toolbar.overlayOpened` so the plugin process can receive it, and
+    /// stopped only after `toolbar.overlayClosed` so a closing plugin still
+    /// sees the event.
     fn apply_plugin_overlay_lifecycle(
         &mut self,
         plugin_id: &str,
@@ -127,22 +138,26 @@ impl WorkspaceApp {
         window_handle: Option<gpui::AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        let anchored_here = self.plugin_overlay_anchor.as_ref().is_some_and(|anchor| {
-            (anchor.plugin_id.as_str(), anchor.action_id.as_str(), anchor.pane_id)
-                == (plugin_id, action_id, pane_id)
-        });
         if overlay {
-            // Any anchor that is not this exact action's pane is displaced by
-            // the claim, including a different overlay action on the same pane.
-            let preempted = if anchored_here {
+            // One overlay action per pane: re-reporting the member's own
+            // action keeps its entry and generation; a different action
+            // replaces it.
+            let reclaims = self
+                .plugin_overlay_members
+                .get(&pane_id)
+                .is_some_and(|member| {
+                    member.plugin_id == plugin_id && member.action_id == action_id
+                });
+            let replaced = if reclaims {
                 None
             } else {
-                self.plugin_overlay_anchor.clone()
+                self.plugin_overlay_members.remove(&pane_id)
             };
-            if let Some(previous) = &preempted {
-                // The preempted pane falls back to its declared default so the
-                // chip mirror and the runtime agree with the lost anchor; a
-                // definition removed by a plugin update has nothing to demote.
+            if let Some(previous) = &replaced {
+                // The replaced action loses its membership; demote its chip
+                // to the declared default so the state mirror and the member
+                // table agree. A definition removed by a plugin update has
+                // nothing to demote.
                 if let Some(definition) =
                     self.plugin_toolbar_definition(&previous.plugin_id, &previous.action_id, cx)
                 {
@@ -150,71 +165,131 @@ impl WorkspaceApp {
                         (
                             previous.plugin_id.clone(),
                             previous.action_id.clone(),
-                            previous.pane_id,
+                            pane_id,
                         ),
                         definition.default_state,
                     );
                 }
-                self.plugin_overlay_anchor = None;
+                // The replaced member may still hold the card (its pane kept
+                // focus, or it stayed opened while hidden): close it before
+                // the new member can take the binding, keeping open/close
+                // paired per pane.
+                if previous.opened {
+                    self.dispatch_native_plugin_event(
+                        previous.plugin_id.clone(),
+                        plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
+                        serde_json::json!({ "actionId": previous.action_id, "paneId": pane_id.0 }),
+                        cx,
+                    );
+                }
             }
-            let claimed = self.plugin_overlay_anchor.is_none();
-            if claimed {
-                // A fresh generation retires the previous anchor's poll loop:
-                // it observes the mismatch and exits, so a release followed by
-                // a quick reclaim cannot accumulate concurrent loops. The new
+            if !reclaims {
+                // A fresh generation retires the previous poll loop: it
+                // observes the mismatch and exits, so a release followed by a
+                // quick reclaim cannot accumulate concurrent loops. The new
                 // loop is spawned below through the single-flight guard.
                 self.plugin_overlay_generation += 1;
-                self.plugin_overlay_anchor = Some(PluginOverlayAnchor {
-                    plugin_id: plugin_id.to_string(),
-                    action_id: action_id.to_string(),
+                self.plugin_overlay_members.insert(
                     pane_id,
-                    window: window_handle,
-                    visible: false,
-                    timer_active: false,
-                    generation: self.plugin_overlay_generation,
-                });
+                    PluginOverlayAnchor {
+                        plugin_id: plugin_id.to_string(),
+                        action_id: action_id.to_string(),
+                        pane_id,
+                        window: window_handle,
+                        opened: false,
+                        visible: false,
+                        timer_active: false,
+                        generation: self.plugin_overlay_generation,
+                    },
+                );
             }
             self.sync_plugin_toolbar_runtime(plugin_id, cx);
-            if let Some(previous) = &preempted {
-                // The preempted plugin must learn its overlay closed before
-                // its runtime may stop, mirroring the release path ordering;
-                // otherwise a runtime still engaged by another pane keeps
-                // polling for a pane that no longer owns the anchor.
-                self.dispatch_native_plugin_event(
-                    previous.plugin_id.clone(),
-                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
-                    serde_json::json!({
-                        "actionId": previous.action_id,
-                        "paneId": previous.pane_id.0,
-                    }),
-                    cx,
-                );
+            if self.active_pane_id(cx) == Some(pane_id) {
+                // The new member owns the card now: hand it over from the
+                // previous holder in closed-then-opened order, mirroring the
+                // poll's rebind.
+                self.bind_plugin_overlay(pane_id, cx);
+            }
+            if let Some(previous) = &replaced {
+                // The replaced plugin's runtime may stop only after its
+                // overlay closed (dispatched above); otherwise a runtime still
+                // engaged by another pane keeps polling for a pane that no
+                // longer owns the card.
                 if previous.plugin_id != plugin_id {
                     self.sync_plugin_toolbar_runtime(&previous.plugin_id, cx);
                 }
             }
-            if claimed {
-                self.dispatch_native_plugin_event(
-                    plugin_id.to_string(),
-                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_OPENED_EVENT,
-                    serde_json::json!({ "actionId": action_id, "paneId": pane_id.0 }),
-                    cx,
-                );
-                self.ensure_plugin_overlay_visibility_timer(cx);
-            }
-        } else if anchored_here {
-            if let Some(anchor) = self.plugin_overlay_anchor.take() {
-                self.dispatch_native_plugin_event(
-                    anchor.plugin_id,
-                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
-                    serde_json::json!({ "actionId": anchor.action_id, "paneId": pane_id.0 }),
-                    cx,
-                );
+            self.ensure_plugin_overlay_visibility_timer(cx);
+        } else if self
+            .plugin_overlay_members
+            .get(&pane_id)
+            .is_some_and(|member| member.plugin_id == plugin_id && member.action_id == action_id)
+        {
+            // Only the member action itself can release its pane's
+            // membership; a different action leaving overlay must not touch
+            // it. A member that never held the card needs no closed event.
+            if let Some(member) = self.plugin_overlay_members.remove(&pane_id) {
+                if member.opened {
+                    self.dispatch_native_plugin_event(
+                        member.plugin_id,
+                        plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
+                        serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 }),
+                        cx,
+                    );
+                }
             }
             self.sync_plugin_toolbar_runtime(plugin_id, cx);
         } else {
             self.sync_plugin_toolbar_runtime(plugin_id, cx);
         }
+    }
+
+    /// Moves the single card to `pane_id`: closes the member that currently
+    /// holds it (if another one does) and opens the new holder. Members that
+    /// never held the card receive no events, so open/close stays strictly
+    /// paired per pane.
+    fn bind_plugin_overlay(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
+        let previous_owner = self
+            .plugin_overlay_members
+            .iter()
+            .find(|(owner_pane, member)| member.opened && **owner_pane != pane_id)
+            .map(|(owner_pane, _)| *owner_pane);
+        if let Some(owner_pane) = previous_owner {
+            self.close_plugin_overlay_member(owner_pane, cx);
+        }
+        if let Some(member) = self.plugin_overlay_members.get_mut(&pane_id) {
+            if !member.opened {
+                member.opened = true;
+                let plugin_id = member.plugin_id.clone();
+                let payload =
+                    serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 });
+                self.dispatch_native_plugin_event(
+                    plugin_id,
+                    plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_OPENED_EVENT,
+                    payload,
+                    cx,
+                );
+            }
+        }
+    }
+
+    /// Dispatches `toolbar.overlayClosed` for the card holder and clears its
+    /// open and visibility bookkeeping so a later rebind starts a fresh event
+    /// pair. The member keeps its overlay membership and chip state.
+    fn close_plugin_overlay_member(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
+        let Some(member) = self.plugin_overlay_members.get_mut(&pane_id) else {
+            return;
+        };
+        member.opened = false;
+        member.visible = false;
+        let plugin_id = member.plugin_id.clone();
+        let payload = serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 });
+        self.dispatch_native_plugin_event(
+            plugin_id,
+            plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
+            payload,
+            cx,
+        );
     }
 
     /// Starts or stops a toolbar plugin's runtime from the authoritative
@@ -241,68 +316,116 @@ impl WorkspaceApp {
         });
     }
 
-    /// Poll-side mirror of the render gate. The card only paints in the
-    /// anchor window, and `anchor.window` is written only at claim time: after
-    /// the pane moves to another window the gate fails there while the pane
-    /// can still be the active one, so the poll must also require the anchor
-    /// to point at the window that renders it. Otherwise the plugin keeps
-    /// polling the device for a card the user cannot see.
-    fn plugin_overlay_poll_visible(&self, cx: &App) -> bool {
-        let Some(anchor) = self.plugin_overlay_anchor.as_ref() else {
+    /// Poll-side mirror of the render gate for the member holding the card.
+    /// The card only paints in the member window, and `member.window` is
+    /// written only at claim time: after the pane moves to another window the
+    /// gate fails there while the pane can still be the active one, so the
+    /// poll must also require the member to point at the window that renders
+    /// it. Otherwise the plugin keeps polling the device for a card the user
+    /// cannot see.
+    fn plugin_overlay_member_visible(&self, pane_id: PaneId, cx: &App) -> bool {
+        let Some(member) = self.plugin_overlay_members.get(&pane_id) else {
             return false;
         };
-        if self.active_pane_id(cx) != Some(anchor.pane_id) {
+        if self.active_pane_id(cx) != Some(member.pane_id) {
             return false;
         }
-        let Some(anchor_window) = anchor.window else {
+        let Some(member_window) = member.window else {
             return false;
         };
-        let Some(main) = self.window_registry.handle_for_role(window_registry::WindowRole::Main)
+        let Some(main) = self
+            .window_registry
+            .handle_for_role(window_registry::WindowRole::Main)
         else {
             return false;
         };
-        anchor_window.window_id() == main.window_id()
+        member_window.window_id() == main.window_id()
     }
 
-    /// Single-flight 1s poll that reports focus changes of the anchored pane
-    /// to the plugin as `toolbar.overlayVisibilityChanged`. The loop owns no
-    /// business semantics and self-terminates once the anchor is gone or its
-    /// generation was superseded by a newer claim, so at most one loop is
-    /// live per anchor generation.
+    /// Single-flight 1s poll that keeps the card bound to the active pane's
+    /// membership: when the bound member changes it reports the handover to
+    /// the plugins as `toolbar.overlayClosed` then `toolbar.overlayOpened`,
+    /// and while a member holds the card it reports focus or window changes as
+    /// `toolbar.overlayVisibilityChanged`. Losing focus to a non-member pane
+    /// only hides the card, so the holder keeps its open state. The loop owns
+    /// no business semantics and self-terminates once the member table is
+    /// empty or a newer claim superseded its generation, so at most one loop
+    /// is live for the table.
     fn ensure_plugin_overlay_visibility_timer(&mut self, cx: &mut Context<Self>) {
-        let Some(anchor) = self.plugin_overlay_anchor.as_mut() else {
+        // The loop serves the whole member table; only the newest claim's
+        // member carries it, so the single-flight guard lives there and older
+        // loops retire on their generation mismatch.
+        let generation = self.plugin_overlay_generation;
+        let Some(member) = self
+            .plugin_overlay_members
+            .values_mut()
+            .find(|member| member.generation == generation)
+        else {
             return;
         };
-        if anchor.timer_active {
+        if member.timer_active {
             return;
         }
-        anchor.timer_active = true;
-        let generation = anchor.generation;
+        member.timer_active = true;
         cx.spawn(async move |this, cx| {
             loop {
-                gpui::Timer::after(std::time::Duration::from_secs(1)).await;
+                // Background-executor timer (as in the settings watch loop) so
+                // the cadence is drivable by test virtual clocks.
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
                 let Ok(keep) = this.update(cx, |workspace, cx| {
-                    let Some(anchor) = workspace.plugin_overlay_anchor.as_ref() else {
-                        return false;
-                    };
-                    if anchor.generation != generation {
-                        // A newer claim owns the anchor now; its own loop
-                        // serves it, so retire this one instead of polling the
-                        // replacement anchor from two loops.
+                    if workspace.plugin_overlay_members.is_empty() {
                         return false;
                     }
-                    // Mirror the render gate (window match included) so a pane
-                    // whose anchor window moved away reports invisible.
-                    let visible = workspace.plugin_overlay_poll_visible(cx);
-                    if visible != anchor.visible {
-                        let plugin_id = anchor.plugin_id.clone();
+                    if workspace.plugin_overlay_generation != generation {
+                        // A newer claim owns the loop now; its own loop serves
+                        // the table, so retire this one instead of polling the
+                        // replacement membership from two loops.
+                        return false;
+                    }
+                    let bound = workspace
+                        .active_pane_id(cx)
+                        .filter(|pane| workspace.plugin_overlay_members.contains_key(pane));
+                    let holder = workspace
+                        .plugin_overlay_members
+                        .iter()
+                        .find(|(_, member)| member.opened)
+                        .map(|(pane, _)| *pane);
+                    // A bound member takes the card from the previous holder;
+                    // an unbound table (focus on a non-member pane) keeps the
+                    // holder so the handover stays closed/opened-paired.
+                    if let Some(bound_pane) = bound {
+                        if bound != holder {
+                            workspace.bind_plugin_overlay(bound_pane, cx);
+                        }
+                    }
+                    // Mirror the render gate (window match included) for the
+                    // holder: a member whose window moved away, or a holder
+                    // that lost focus to a non-member pane, reports invisible.
+                    let Some(holder) = workspace
+                        .plugin_overlay_members
+                        .iter()
+                        .find(|(_, member)| member.opened)
+                        .map(|(pane, _)| *pane)
+                    else {
+                        return true;
+                    };
+                    let visible = workspace.plugin_overlay_member_visible(holder, cx);
+                    let changed = workspace
+                        .plugin_overlay_members
+                        .get(&holder)
+                        .is_some_and(|member| member.visible != visible);
+                    if changed {
+                        let member = &workspace.plugin_overlay_members[&holder];
+                        let plugin_id = member.plugin_id.clone();
                         let payload = serde_json::json!({
-                            "actionId": anchor.action_id,
-                            "paneId": anchor.pane_id.0,
+                            "actionId": member.action_id,
+                            "paneId": member.pane_id.0,
                             "visible": visible,
                         });
-                        if let Some(anchor) = workspace.plugin_overlay_anchor.as_mut() {
-                            anchor.visible = visible;
+                        if let Some(member) = workspace.plugin_overlay_members.get_mut(&holder) {
+                            member.visible = visible;
                         }
                         workspace.dispatch_native_plugin_event(
                             plugin_id,
@@ -324,27 +447,36 @@ impl WorkspaceApp {
         .detach();
     }
 
+    /// The member the card is bound to: the overlay member in the active
+    /// pane. The binding is derived from focus and never stored, so a focus
+    /// change rebinds the render immediately while the visibility poll
+    /// reports the handover to the plugins.
+    fn plugin_overlay_bound(&self, cx: &App) -> Option<&PluginOverlayAnchor> {
+        let pane_id = self.active_pane_id(cx)?;
+        self.plugin_overlay_members.get(&pane_id)
+    }
+
     /// Whether the overlay card may render in this window; the call site
     /// additionally requires the window to be focused, so an unfocused
-    /// anchor window shows nothing.
+    /// member window shows nothing.
     pub(in crate::workspace) fn plugin_overlay_targets_window(
         &self,
         window: gpui::AnyWindowHandle,
+        cx: &App,
     ) -> bool {
-        self.plugin_overlay_anchor
-            .as_ref()
-            .is_some_and(|anchor| anchor.window == Some(window))
+        self.plugin_overlay_bound(cx)
+            .is_some_and(|member| member.window == Some(window))
     }
 
-    /// The overlay anchor is alive while its pane still exists; a closed pane
-    /// releases the anchor, so the card never follows focus onto another pane.
+    /// The card renders only while a member holds the active pane; a closed
+    /// pane loses its membership, so the card never follows focus onto another
+    /// pane.
     pub(in crate::workspace) fn plugin_overlay_visible(&self, cx: &App) -> bool {
-        self.plugin_overlay_anchor
-            .as_ref()
-            .is_some_and(|anchor| self.tab_host.read(cx).panes().contains_key(&anchor.pane_id))
+        self.plugin_overlay_bound(cx)
+            .is_some_and(|member| self.tab_host.read(cx).panes().contains_key(&member.pane_id))
     }
 
-    /// Bottom-right overlay card rendering the anchored action's `overlayTab`
+    /// Bottom-right overlay card rendering the bound member's `overlayTab`
     /// runtime view. Renders nothing until the activated plugin registers its
     /// view; content refresh is the plugin's responsibility.
     pub(in crate::workspace) fn render_plugin_overlay_panel(
@@ -352,11 +484,11 @@ impl WorkspaceApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.tokens.ui;
-        let Some(anchor) = self.plugin_overlay_anchor.clone() else {
+        let Some(bound) = self.plugin_overlay_bound(cx).cloned() else {
             return div().into_any_element();
         };
         let Some(definition) =
-            self.plugin_toolbar_definition(&anchor.plugin_id, &anchor.action_id, cx)
+            self.plugin_toolbar_definition(&bound.plugin_id, &bound.action_id, cx)
         else {
             return div().into_any_element();
         };
@@ -368,7 +500,7 @@ impl WorkspaceApp {
             .read(cx)
             .registry()
             .contributions()
-            .runtime_tab_view(&anchor.plugin_id, tab_id)
+            .runtime_tab_view(&bound.plugin_id, tab_id)
         else {
             return div().into_any_element();
         };
@@ -379,7 +511,7 @@ impl WorkspaceApp {
             .clone()
             .unwrap_or_else(|| view.title.clone());
         let body = self.render_native_plugin_declarative_schema(
-            &anchor.plugin_id,
+            &bound.plugin_id,
             "tab",
             &view.tab_id,
             &view.schema,
@@ -437,23 +569,24 @@ impl WorkspaceApp {
                                     cx.stop_propagation();
                                     // Closing the card equals the toolbar chip
                                     // cycling to the default state: it releases
-                                    // the anchor and re-derives the runtime.
-                                    let Some(anchor) = this.plugin_overlay_anchor.clone() else {
+                                    // the bound member and re-derives the
+                                    // runtime.
+                                    let Some(bound) = this.plugin_overlay_bound(cx).cloned() else {
                                         return;
                                     };
                                     let Some(definition) = this.plugin_toolbar_definition(
-                                        &anchor.plugin_id,
-                                        &anchor.action_id,
+                                        &bound.plugin_id,
+                                        &bound.action_id,
                                         cx,
                                     ) else {
                                         return;
                                     };
                                     this.apply_plugin_toolbar_state(
-                                        &anchor.plugin_id,
-                                        &anchor.action_id,
+                                        &bound.plugin_id,
+                                        &bound.action_id,
                                         &definition.default_state,
-                                        anchor.pane_id,
-                                        anchor.window,
+                                        bound.pane_id,
+                                        bound.window,
                                         cx,
                                     );
                                 }),
@@ -475,8 +608,9 @@ impl WorkspaceApp {
     }
 
     /// Removes every toolbar state entry owned by a closed pane, releases the
-    /// overlay anchor it held, and re-derives the runtime of every affected
-    /// plugin. Reconnecting opens a fresh pane that seeds the default state.
+    /// overlay membership it held, and re-derives the runtime of every
+    /// affected plugin. Reconnecting opens a fresh pane that seeds the default
+    /// state.
     pub(in crate::workspace) fn plugin_toolbar_pane_closed(
         &mut self,
         pane_id: &PaneId,
@@ -494,16 +628,14 @@ impl WorkspaceApp {
                     true
                 }
             });
-        if self
-            .plugin_overlay_anchor
-            .as_ref()
-            .is_some_and(|anchor| anchor.pane_id == *pane_id)
-        {
-            if let Some(anchor) = self.plugin_overlay_anchor.take() {
+        // A closed pane cannot hold the card: only its holder needs the closed
+        // event, and the remaining members rebind through the visibility poll.
+        if let Some(member) = self.plugin_overlay_members.remove(pane_id) {
+            if member.opened {
                 self.dispatch_native_plugin_event(
-                    anchor.plugin_id,
+                    member.plugin_id,
                     plugin_host::NATIVE_PLUGIN_TOOLBAR_OVERLAY_CLOSED_EVENT,
-                    serde_json::json!({ "actionId": anchor.action_id, "paneId": pane_id.0 }),
+                    serde_json::json!({ "actionId": member.action_id, "paneId": pane_id.0 }),
                     cx,
                 );
             }
@@ -702,7 +834,10 @@ mod tests {
         .unwrap();
 
         let zh = load_plugin_locale_bundle(dir.path(), "locales", "zh-CN");
-        assert_eq!(zh.get("toolbarButton").map(String::as_str), Some("演示模式"));
+        assert_eq!(
+            zh.get("toolbarButton").map(String::as_str),
+            Some("演示模式")
+        );
         assert_eq!(zh.get("toolbarModeOff").map(String::as_str), Some("关闭"));
 
         let missing_tag = load_plugin_locale_bundle(dir.path(), "locales", "fr-FR");
@@ -720,13 +855,16 @@ mod overlay_lifecycle_tests {
     use super::*;
     use crate::workspace::session_manager::tests::isolated_workspace_fixture;
     use gpui::TestAppContext;
+    use std::time::Duration;
 
     /// WorkspaceApp owns process-wide storage, so run the overlay state
     /// machine against an isolated portable fixture directory like the other
-    /// workspace-level tests.
-    fn overlay_test_workspace(cx: &mut TestAppContext) -> Option<Entity<WorkspaceApp>> {
-        let _fixture_dir =
-            isolated_workspace_fixture(cx, "OXIDETERM_PLUGIN_OVERLAY_TEST_DIR")?;
+    /// workspace-level tests. The shell window registers as Main, which the
+    /// visibility poll compares against the member window.
+    fn overlay_test_workspace(
+        cx: &mut TestAppContext,
+    ) -> Option<(Entity<WorkspaceApp>, gpui::AnyWindowHandle)> {
+        let _fixture_dir = isolated_workspace_fixture(cx, "OXIDETERM_PLUGIN_OVERLAY_TEST_DIR")?;
         let settings_path = default_settings_path();
         let mut settings = SettingsStore::load_from_path(settings_path).unwrap();
         settings.settings_mut().ssh_config.auto_load_hosts = false;
@@ -738,88 +876,304 @@ mod overlay_lifecycle_tests {
             let workspace = cx.new(|cx| WorkspaceApp::new(window, cx, None, None).unwrap());
             WorkspaceWindowShell::new(workspace, window, cx)
         });
-        Some(shell.read_with(cx, |shell, _| shell.session_entity()))
+        let workspace = shell.read_with(cx, |shell, _| shell.session_entity());
+        let window = workspace.update(cx, |workspace, _cx| {
+            workspace
+                .window_registry
+                .handle_for_role(window_registry::WindowRole::Main)
+                .expect("the shell window registers as main")
+        });
+        Some((workspace, window))
+    }
+
+    /// Installs one tab with three panes so focus can move between overlay
+    /// members and a non-member pane; the first pane starts active.
+    fn overlay_test_panes(
+        workspace: &Entity<WorkspaceApp>,
+        cx: &mut TestAppContext,
+    ) -> [PaneId; 3] {
+        let panes = [PaneId(1), PaneId(2), PaneId(3)];
+        workspace.update(cx, |ws, cx| {
+            ws.tab_host.update(cx, |host, _cx| {
+                host.insert_and_select_main_tab(Tab {
+                    id: TabId(1),
+                    kind: TabKind::LocalTerminal,
+                    title: "overlay-test".into(),
+                    title_source: TabTitleSource::Static,
+                    root_pane: Some(PaneNode::leaf(panes[0], TerminalSessionId(1))),
+                    active_pane_id: Some(panes[0]),
+                });
+                assert!(host.split_pane(
+                    TabId(1),
+                    panes[0],
+                    PaneId(10),
+                    SplitDirection::Horizontal,
+                    panes[1],
+                    TerminalSessionId(2),
+                ));
+                assert!(host.split_pane(
+                    TabId(1),
+                    panes[1],
+                    PaneId(11),
+                    SplitDirection::Horizontal,
+                    panes[2],
+                    TerminalSessionId(3),
+                ));
+                assert!(host.set_active_pane(Some(TabId(1)), panes[0]));
+            });
+        });
+        panes
     }
 
     #[gpui::test]
-    fn same_pane_second_action_preempts_and_foreign_release_keeps_anchor(
-        cx: &mut TestAppContext,
-    ) {
-        let Some(workspace) = overlay_test_workspace(cx) else {
+    fn second_member_claim_coexists_and_only_the_bound_pane_opens(cx: &mut TestAppContext) {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
             return;
         };
-        let pane = PaneId(1);
+        let [first, second, _third] = overlay_test_panes(&workspace, cx);
         workspace.update(cx, |ws, cx| {
-            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
-            let (first_action, first_generation) = {
-                let anchor = ws.plugin_overlay_anchor.as_ref().expect("first claim anchors");
-                (anchor.action_id.clone(), anchor.generation)
-            };
-            assert_eq!(first_action, "a1");
-
-            // H1: a second overlay action on the same pane must not silently
-            // share the anchor; it preempts and claims with a newer generation.
-            ws.apply_plugin_overlay_lifecycle("p", "a2", true, pane, None, cx);
-            let second_generation = {
-                let anchor = ws.plugin_overlay_anchor.as_ref().expect("second claim anchors");
-                assert_eq!(anchor.action_id, "a2");
-                assert_eq!(anchor.pane_id, pane);
-                anchor.generation
-            };
-            assert!(second_generation > first_generation);
-
-            // Re-applying the anchored action's own state keeps the anchor.
-            ws.apply_plugin_overlay_lifecycle("p", "a2", true, pane, None, cx);
+            // `first` is the active pane, so its claim binds and opens.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            let member = ws
+                .plugin_overlay_members
+                .get(&first)
+                .expect("first claim registers a member");
             assert_eq!(
-                ws.plugin_overlay_anchor.as_ref().unwrap().generation,
-                second_generation
+                (member.plugin_id.as_str(), member.action_id.as_str()),
+                ("p", "a1")
             );
+            assert!(member.opened);
+            assert!(member.timer_active);
 
-            // H1: a non-anchored action leaving overlay must not release it.
-            ws.apply_plugin_overlay_lifecycle("p", "a1", false, pane, None, cx);
-            assert_eq!(ws.plugin_overlay_anchor.as_ref().unwrap().action_id, "a2");
+            // H1 (rewritten): a second pane's claim coexists with the first
+            // instead of preempting it. The inactive pane only joins the
+            // table; no other member is touched and no card opens for it.
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, second, Some(window), cx);
+            assert_eq!(ws.plugin_overlay_members.len(), 2);
+            let first = ws
+                .plugin_overlay_members
+                .get(&first)
+                .expect("first keeps membership");
+            assert!(first.opened, "the bound member keeps the card");
+            let second = &ws.plugin_overlay_members[&second];
+            assert!(!second.opened, "an inactive claim must not open the card");
+            assert_eq!(second.generation, ws.plugin_overlay_generation);
+            assert!(
+                second.timer_active,
+                "the newest claim carries the poll loop"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn same_pane_second_action_replaces_member_and_rebinds_in_place(cx: &mut TestAppContext) {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let [first, ..] = overlay_test_panes(&workspace, cx);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            let (first_generation, first_opened) = {
+                let member = &ws.plugin_overlay_members[&first];
+                (member.generation, member.opened)
+            };
+            assert!(first_opened);
+
+            // H1: one overlay action per pane. The second action replaces the
+            // member in place (the bound pane keeps the card) with a newer
+            // generation; the table still holds exactly one entry.
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, first, Some(window), cx);
+            let member = ws
+                .plugin_overlay_members
+                .get(&first)
+                .expect("replacement member");
+            assert_eq!(member.action_id, "a2");
+            assert!(
+                member.opened,
+                "the bound pane's card moved to the new action"
+            );
+            assert!(member.generation > first_generation);
+            assert_eq!(ws.plugin_overlay_members.len(), 1);
+
+            // Re-reporting the member's own action keeps its generation.
+            let generation = member.generation;
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, first, Some(window), cx);
+            assert_eq!(ws.plugin_overlay_members[&first].generation, generation);
+
+            // A non-member action leaving overlay must not release the member.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", false, first, Some(window), cx);
+            assert_eq!(ws.plugin_overlay_members[&first].action_id, "a2");
+        });
+    }
+
+    #[gpui::test]
+    fn release_drops_only_the_releasing_member(cx: &mut TestAppContext) {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let [first, second, _third] = overlay_test_panes(&workspace, cx);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, second, Some(window), cx);
+            // Releasing the bound member drops only its entry; the other
+            // member keeps its membership and chip state.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", false, first, Some(window), cx);
+            assert!(!ws.plugin_overlay_members.contains_key(&first));
+            assert!(ws.plugin_overlay_members.contains_key(&second));
+            // Releasing the never-bound member empties the table.
+            ws.apply_plugin_overlay_lifecycle("p", "a2", false, second, Some(window), cx);
+            assert!(ws.plugin_overlay_members.is_empty());
         });
     }
 
     #[gpui::test]
     fn release_then_reclaim_starts_a_new_generation(cx: &mut TestAppContext) {
-        let Some(workspace) = overlay_test_workspace(cx) else {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
             return;
         };
-        let pane = PaneId(2);
+        let [first, ..] = overlay_test_panes(&workspace, cx);
         workspace.update(cx, |ws, cx| {
-            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
-            let generation = ws.plugin_overlay_anchor.as_ref().unwrap().generation;
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            let generation = ws.plugin_overlay_members[&first].generation;
             // The claim path spawned exactly one poll loop for this generation.
-            assert!(ws.plugin_overlay_anchor.as_ref().unwrap().timer_active);
+            assert!(ws.plugin_overlay_members[&first].timer_active);
 
-            // Release: the anchored action itself leaves the overlay state.
-            ws.apply_plugin_overlay_lifecycle("p", "a1", false, pane, None, cx);
-            assert!(ws.plugin_overlay_anchor.is_none());
+            // Release: the member action itself leaves the overlay state.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", false, first, Some(window), cx);
+            assert!(ws.plugin_overlay_members.is_empty());
 
             // H2: a reclaim right after release must carry a newer generation
-            // so the retired poll loop cannot serve the replacement anchor.
-            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
-            let anchor = ws.plugin_overlay_anchor.as_ref().expect("reclaim anchors");
-            assert!(anchor.generation > generation);
-            assert!(anchor.timer_active);
+            // so the retired poll loop cannot serve the replacement membership.
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            let member = ws
+                .plugin_overlay_members
+                .get(&first)
+                .expect("reclaim registers");
+            assert!(member.generation > generation);
+            assert!(member.timer_active);
         });
     }
 
     #[gpui::test]
-    fn pane_close_releases_anchor_and_state_entries(cx: &mut TestAppContext) {
-        let Some(workspace) = overlay_test_workspace(cx) else {
+    fn pane_close_releases_membership_and_state_entries(cx: &mut TestAppContext) {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
             return;
         };
-        let pane = PaneId(3);
+        let [first, second, _third] = overlay_test_panes(&workspace, cx);
         workspace.update(cx, |ws, cx| {
-            ws.apply_plugin_overlay_lifecycle("p", "a1", true, pane, None, cx);
-            ws.plugin_toolbar_states
-                .insert(("p".to_string(), "a1".to_string(), pane), "overlay".to_string());
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, second, Some(window), cx);
+            ws.plugin_toolbar_states.insert(
+                ("p".to_string(), "a1".to_string(), first),
+                "overlay".to_string(),
+            );
 
-            ws.plugin_toolbar_pane_closed(&pane, cx);
-            assert!(ws.plugin_overlay_anchor.is_none());
+            ws.plugin_toolbar_pane_closed(&first, cx);
+            assert!(!ws.plugin_overlay_members.contains_key(&first));
+            assert!(
+                ws.plugin_overlay_members.contains_key(&second),
+                "closing one pane must not drop other members"
+            );
             assert!(ws.plugin_toolbar_states.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn poll_hands_the_card_between_members_on_focus_change(cx: &mut TestAppContext) {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let [first, second, _third] = overlay_test_panes(&workspace, cx);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+            ws.apply_plugin_overlay_lifecycle("p", "a2", true, second, Some(window), cx);
+        });
+        // One tick first: the active member holds the card and reports visible.
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        workspace.read_with(cx, |ws, _cx| {
+            assert!(ws.plugin_overlay_members[&first].visible);
+            assert!(!ws.plugin_overlay_members[&second].opened);
+        });
+        // Focus moves to the second member; the poll rebinds on its next tick.
+        workspace.update(cx, |ws, cx| {
+            ws.tab_host.update(cx, |host, _cx| {
+                assert!(host.set_active_pane(Some(TabId(1)), second));
+            });
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        workspace.read_with(cx, |ws, _cx| {
+            // The handover closed the previous holder and opened the new one:
+            // `opened` records the outstanding `overlayOpened` per member, so
+            // the flag flips exactly where the event was dispatched.
+            let old_holder = &ws.plugin_overlay_members[&first];
+            assert!(!old_holder.opened, "the old holder receives overlayClosed");
+            assert!(
+                !old_holder.visible,
+                "closing resets the visibility mirror after it was visible"
+            );
+            assert!(
+                ws.plugin_overlay_members.contains_key(&first),
+                "the old holder keeps its overlay membership"
+            );
+            let new_holder = &ws.plugin_overlay_members[&second];
+            assert!(
+                new_holder.opened,
+                "the newly bound member receives overlayOpened"
+            );
+            assert!(
+                new_holder.visible,
+                "the focused main-window member is visible"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn poll_reports_visibility_and_focus_loss_only_hides(cx: &mut TestAppContext) {
+        let Some((workspace, window)) = overlay_test_workspace(cx) else {
+            return;
+        };
+        let [first, _second, third] = overlay_test_panes(&workspace, cx);
+        workspace.update(cx, |ws, cx| {
+            ws.apply_plugin_overlay_lifecycle("p", "a1", true, first, Some(window), cx);
+        });
+        // The card renders for the focused member in the main window: the
+        // first tick reports visible=true through the mirror.
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        workspace.read_with(cx, |ws, _cx| {
+            let member = &ws.plugin_overlay_members[&first];
+            assert!(member.opened);
+            assert!(member.visible, "the focused main-window member is visible");
+        });
+        // Focus on a non-member pane hides the card but does not close it:
+        // the holder keeps its open state and reports invisible.
+        workspace.update(cx, |ws, cx| {
+            ws.tab_host.update(cx, |host, _cx| {
+                assert!(host.set_active_pane(Some(TabId(1)), third));
+            });
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        workspace.read_with(cx, |ws, _cx| {
+            let member = &ws.plugin_overlay_members[&first];
+            assert!(
+                member.opened,
+                "losing focus to a non-member pane must not close the card"
+            );
+            assert!(!member.visible, "the hidden holder reports invisible");
+        });
+        // The holder stays the single opened member while unbound; no other
+        // entry takes the card.
+        workspace.read_with(cx, |ws, _cx| {
+            assert_eq!(
+                ws.plugin_overlay_members
+                    .values()
+                    .filter(|member| member.opened)
+                    .count(),
+                1
+            );
         });
     }
 }
