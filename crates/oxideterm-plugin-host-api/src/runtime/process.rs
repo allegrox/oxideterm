@@ -30,8 +30,16 @@ pub(super) fn build_process_command(executable: &Path) -> tokio::process::Comman
                 extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
             });
         if launches_through_cmd {
+            // resolve_process_runtime_entry canonicalizes the entry, which
+            // yields a verbatim (\\?\-prefixed) path on Windows. cmd.exe cannot
+            // resolve verbatim paths as a command target, so the launcher must
+            // receive the plain drive-letter form.
+            let verbatim_target = executable.to_string_lossy();
+            let target = verbatim_target
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&verbatim_target);
             let mut command = tokio::process::Command::new("cmd");
-            command.arg("/C").arg(executable);
+            command.arg("/C").arg(target);
             return command;
         }
     }
