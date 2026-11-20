@@ -1247,6 +1247,10 @@ impl WorkspaceApp {
             .when_some(self.render_session_sort_menu(cx), |root, menu| {
                 root.child(menu)
             })
+            .when_some(
+                self.render_active_session_selection_menu(window, cx),
+                |root, menu| root.child(menu),
+            )
             .when_some(self.render_context_tools_menu(window, cx), |root, menu| {
                 root.child(menu)
             })
@@ -1320,15 +1324,6 @@ impl WorkspaceApp {
                     Some(WorkspaceOverlayConfirmKind::NodeDisconnect { .. })
                 ),
                 |root| root.child(self.render_node_disconnect_confirm_dialog(cx)),
-            )
-            .when(
-                matches!(
-                    overlay_confirm_snapshot
-                        .as_ref()
-                        .map(|snapshot| &snapshot.kind),
-                    Some(WorkspaceOverlayConfirmKind::RemoveSessionNodes { .. })
-                ),
-                |root| root.child(self.render_remove_session_nodes_confirm_dialog(cx)),
             )
             .when(tab_close_confirm_open, |root| {
                 root.child(self.render_tab_close_confirm_dialog(cx))
@@ -1426,9 +1421,6 @@ impl WorkspaceApp {
                 root.child(preview)
             })
             .when_some(self.render_tab_context_menu(window, cx), |root, menu| {
-                root.child(menu)
-            })
-            .when_some(self.render_session_row_menu(window, cx), |root, menu| {
                 root.child(menu)
             })
             .when_some(self.render_terminal_cast_player(cx), |root, player| {

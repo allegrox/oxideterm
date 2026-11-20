@@ -208,6 +208,9 @@ impl WorkspaceApp {
         // entry tabs so the selected icon frame follows the visible surface.
         match self.active_content_tab(cx).map(|tab| &tab.kind) {
             Some(TabKind::Settings) => {
+                // These surfaces own no SSH node; put the previous highlight
+                // out instead of leaving it stale.
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Settings;
             }
             Some(TabKind::Forwards) => {
@@ -285,27 +288,35 @@ impl WorkspaceApp {
                 }
             }
             Some(TabKind::SessionManager) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::Runtime) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::ConnectionPool) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::Topology) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::NotificationCenter) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::PluginManager) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::CloudSync) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::RemoteDesktop) => {
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
             Some(TabKind::MoshTerminal) => {
@@ -314,9 +325,26 @@ impl WorkspaceApp {
                 self.active_ssh_node_id = None;
             }
             _ => {
+                // Plain terminal tabs and any other surface re-derive node
+                // ownership below; clear first so local terminals and unknown
+                // surfaces put the previous highlight out.
+                self.active_ssh_node_id = None;
                 self.active_surface = ActiveSurface::Terminal;
             }
         }
+        self.sync_active_ssh_node_from_terminal_session(cx);
+        self.activate_embedded_sftp_sidebar_if_visible(cx);
+    }
+
+    /// Re-derives SSH node ownership from the active terminal session, putting
+    /// the previous host highlight out when the active terminal owns no node.
+    /// Tab creation paths bypass `sync_active_tab_surface` and call this
+    /// directly so the sidebar host row follows the newly active terminal.
+    pub(in crate::workspace) fn sync_active_ssh_node_from_terminal_session(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_ssh_node_id = None;
         if let Some(session_id) = self.active_terminal_session_id(cx) {
             self.active_ssh_node_id = self
                 .workspace_runtime
@@ -326,7 +354,6 @@ impl WorkspaceApp {
                 self.expanded_ssh_nodes.insert(node_id.clone());
             }
         }
-        self.activate_embedded_sftp_sidebar_if_visible(cx);
     }
 
     pub(in crate::workspace) fn focus_active_pane(&mut self, window: &mut Window, cx: &mut App) {

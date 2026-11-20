@@ -142,7 +142,7 @@ impl ConnectionFormView {
             .flex()
             .items_center()
             .justify_center()
-            .child(active_icon.render(icon_px, rgb(preview_color)))
+            .child(active_icon.render(icon_px, rgb(preview_color), true))
             .into_any_element()
     }
 
